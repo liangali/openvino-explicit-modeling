@@ -1,0 +1,70 @@
+diff --git a/src/gpu/intel/gemm/jit/generator/pieces/copy_plan.cpp b/src/gpu/intel/gemm/jit/generator/pieces/copy_plan.cpp
+index 9c1a5cff4a..d593d93adc 100644
+--- a/src/gpu/intel/gemm/jit/generator/pieces/copy_plan.cpp
++++ b/src/gpu/intel/gemm/jit/generator/pieces/copy_plan.cpp
+@@ -1293,7 +1293,7 @@ void CopyPlan::planInt4Upconversion(CopyInstruction &i)
+ 
+     bool s4 = (i.src0.type == DataType::s4);
+ 
+-    if (i.src0.stride == 1) {
++    if (i.src0.stride == 1 && i.simd > 1) {
+         // Split into high and low nybble conversions first, if needed.
+         // If dst stride is too large, copy through uw<1>.
+         //   This path allows 2D regions.
+diff --git a/src/gpu/intel/gemm/jit/include/gemmstone/kernel_selector.hpp b/src/gpu/intel/gemm/jit/include/gemmstone/kernel_selector.hpp
+index d20c6bb741..5e2c72a05e 100644
+--- a/src/gpu/intel/gemm/jit/include/gemmstone/kernel_selector.hpp
++++ b/src/gpu/intel/gemm/jit/include/gemmstone/kernel_selector.hpp
+@@ -51,6 +51,7 @@ struct MatchParamsBase
+     bool reqNUnroll32 = false;
+     int stepping = 0;
+     int alignment[3] = {0, 0, 0};
++    int unrollReq[3] = {1, 1, 1};
+     kcatalog::string tags, lateTags;
+     int nExtraReqs = 0;
+     const StrategyRequirement *extraReqs = nullptr;
+diff --git a/src/gpu/intel/gemm/jit/selector/kernel_selector.cpp b/src/gpu/intel/gemm/jit/selector/kernel_selector.cpp
+index 4e6a38269f..bcce305014 100644
+--- a/src/gpu/intel/gemm/jit/selector/kernel_selector.cpp
++++ b/src/gpu/intel/gemm/jit/selector/kernel_selector.cpp
+@@ -135,6 +135,10 @@ bool matches(const kcatalog::Entry &e, const MatchParams &p)
+         ok = ok && (e.driverInfo.unroll[LoopM] % 32 == 0);
+     }
+ 
++    ok = ok && (e.driverInfo.unroll[LoopM] % p.unrollReq[LoopM] == 0);
++    ok = ok && (e.driverInfo.unroll[LoopN] % p.unrollReq[LoopN] == 0);
++    ok = ok && (e.driverInfo.unroll[LoopK] % p.unrollReq[LoopK] == 0);
++
+     for (int i = 0; i < p.nExtraReqs; i++)
+         ok = ok && strategyMatch(e.driverInfo, p.extraReqs[i]);
+ 
+@@ -334,6 +338,13 @@ MatchParamsBase::MatchParamsBase(ngen::HW hw, bool systolicAvailable, bool isInt
+     auto problem = problem_;
+     reqNUnroll32 = problem.hasCMXScale();
+ 
++    if(problem.Tao.is4() || problem.Ta_scale.is4()){
++        unrollReq[LoopM] = 2;
++    }
++    if(problem.Tbo.is4() || problem.Tb_scale.is4()){
++        unrollReq[LoopN] = 2;
++    }
++
+     switch (hw) {
+         default: assert(!"Unknown architecture");
+         case ngen::HW::Gen12LP: selector.hw = kcatalog::HWTagGen12LP; break;
+diff --git a/third_party/ngen/ngen_core.hpp b/third_party/ngen/ngen_core.hpp
+index 3af0c58ba4..ad305b34e7 100644
+--- a/third_party/ngen/ngen_core.hpp
++++ b/third_party/ngen/ngen_core.hpp
+@@ -840,8 +840,10 @@ inline void RegData::fixup(HW hw, int execSize, int execWidth, DataType defaultT
+                 vs = 1;
+                 hs = 0;
+             }
+-        } else if (execSize == width)
++        } else if (execSize == width) {
++            if (hs == 0) width = 1;
+             vs = width * hs;
++        }
+         bool isDest = srcN < 0;
+         if (isDest && hs == 0)
+             hs = (execWidth > getBytes()) ? (execWidth / getBytes()) : 1;
