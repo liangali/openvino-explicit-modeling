@@ -1,23 +1,23 @@
-# OpenVINO Modeling API 快速入门
+# OpenVINO Modeling API Quick Start
 
-本文档说明如何克隆、构建并运行 OpenVINO Modeling API 项目。
+This document explains how to clone, build, and run the OpenVINO Modeling API project.
 
 ---
 
-## 1. 克隆仓库
+## 1. Clone The Repositories
 
-将 `openvino`、`openvino.genai`、`openvino-explicit-modeling` 三个仓库克隆到同一父目录下：
+Clone `openvino`, `openvino.genai`, and `openvino-explicit-modeling` into the same parent directory:
 
 ```
 openvino-modeling-api/
-├── openvino/
-├── openvino.genai/
-└── openvino-explicit-modeling/
+|-- openvino/
+|-- openvino.genai/
+`-- openvino-explicit-modeling/
 ```
 
 ---
 
-## 2. 拉取子模块
+## 2. Pull Submodules
 
 ### openvino
 
@@ -41,42 +41,42 @@ git lfs checkout
 
 ---
 
-## 3. 构建
+## 3. Build
 
 ```powershell
 cd ..\openvino-explicit-modeling
 build.bat
 ```
 
-`build.bat` 会自动构建 openvino 和 openvino.genai，若不存在 `build` 目录会自动创建。
+`build.bat` builds both `openvino` and `openvino.genai`. It also creates the `build` directories if needed.
 
 ---
 
-## 4. 运行测试
+## 4. Run Tests
 
-使用 `auto_tests.py` 运行自动化测试，需从**项目根目录**（即包含 `openvino`、`openvino.genai` 的目录）执行：
+Use `auto_tests.py` for automated testing. Run it from the project root, which contains both `openvino` and `openvino.genai`.
 
-### 基础用法
+### Basic Usage
 
 ```powershell
-# 从 openvino-modeling-api 根目录执行，运行全部测试
+# Run all tests from the openvino-modeling-api root
 cd d:\openvino-modeling-api
 python openvino-explicit-modeling\scripts\auto_tests.py
 
-# 指定项目根目录
+# Specify the project root
 python openvino-explicit-modeling\scripts\auto_tests.py --root .
 
-# 指定模型根目录（默认 D:\data\models）
+# Specify the model root directory (default: D:\data\models)
 python openvino-explicit-modeling\scripts\auto_tests.py --models-root D:\data\models
 ```
 
-### 列出可用测试
+### List Available Tests
 
 ```powershell
 python openvino-explicit-modeling\scripts\auto_tests.py --list
 ```
 
-输出示例：
+Example output:
 ```
 Models root: D:\data\models
 Available tests:
@@ -85,51 +85,51 @@ Available tests:
 ...
 ```
 
-### 选择要运行的测试
+### Select Tests To Run
 
 ```powershell
-# 运行指定索引的测试：0, 1, 2
+# Run specific test indices: 0, 1, 2
 python openvino-explicit-modeling\scripts\auto_tests.py --tests 0 1 2
 
-# 或使用逗号分隔
+# Or use comma-separated input
 python openvino-explicit-modeling\scripts\auto_tests.py --tests 0,1,2
 
-# 运行索引范围（1~5 表示 1,2,3,4,5）
+# Run an index range (1~5 means 1,2,3,4,5)
 python openvino-explicit-modeling\scripts\auto_tests.py --tests 1~5
 
-# 组合：范围 + 单个索引
+# Combine ranges and single indices
 python openvino-explicit-modeling\scripts\auto_tests.py --tests 1~5,7,8~10
 
-# 运行全部
+# Run all tests
 python openvino-explicit-modeling\scripts\auto_tests.py --tests all
 ```
 
-### 综合示例
+### Combined Examples
 
 ```powershell
-# 指定根目录和模型路径，只运行测试 0 和 1
+# Set the root and model path, then run tests 0 and 1 only
 python openvino-explicit-modeling\scripts\auto_tests.py --root . --models-root D:\data\models --tests 0 1
 
-# 从 openvino-explicit-modeling 目录运行，指定上级为根目录
+# Run from the openvino-explicit-modeling directory and use the parent as root
 cd openvino-explicit-modeling
 python scripts\auto_tests.py --root ..
 ```
 
 ---
 
-## 5. 测试输出
+## 5. Test Output
 
-- 测试完成后会在当前目录生成 Markdown 报告
-- 报告中包含 TTFT、吞吐量、时长等统计
-- 若有失败用例，会在 stderr 中列出
+- A Markdown report is generated in the current directory after the run.
+- The report includes TTFT, throughput, duration, and related metrics.
+- Failed cases are listed in `stderr`.
 
 ---
 
-## 参数速查
+## Argument Reference
 
-| 参数 | 说明 | 默认值 |
+| Argument | Description | Default |
 |------|------|--------|
-| `--root` | 项目根目录（含 openvino、openvino.genai） | 脚本所在目录的父目录 |
-| `--models-root` | 模型文件根目录 | `D:\data\models` |
-| `--list` | 列出可用测试并退出 | - |
-| `--tests` | 要运行的测试索引，支持 `0,1,2`、`1~5`、`all` | 运行全部 |
+| `--root` | Project root containing `openvino` and `openvino.genai` | Parent of the script directory |
+| `--models-root` | Model file root directory | `D:\data\models` |
+| `--list` | List available tests and exit | - |
+| `--tests` | Test indices to run, supports `0,1,2`, `1~5`, and `all` | Run all |
