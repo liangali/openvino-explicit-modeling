@@ -56,6 +56,7 @@ MODELING_ZIMAGE_EXE_REL = GENAI_BIN_REL / "modeling_zimage.exe"
 MODELING_WAN_T2V_EXE_REL = GENAI_BIN_REL / "modeling_wan_t2v.exe"
 MODELING_DFLASH_EXE_REL = GENAI_BIN_REL / "modeling_dflash.exe"
 MODELING_QWEN3_TTS_EXE_REL = GENAI_BIN_REL / "modeling_qwen3_tts.exe"
+BENCHMARK_GENAI_EXE_REL = GENAI_BIN_REL / "benchmark_genai.exe"
 
 MODELING_ULT_EXE_REL = (
     Path("openvino.genai")
@@ -131,6 +132,16 @@ QWEN3_5_35B_GREEDY_TEXT_ARGS = [
     "int4_asym",
     "128",
     "int4_asym",
+]
+QWEN3_5_35B_BENCHMARK_ARGS = [
+    "-p",
+    PROMPT,
+    "-n",
+    "1",
+    "--mt",
+    "300",
+    "-d",
+    "GPU",
 ]
 MODELING_QWEN3_5_VL_ARGS = [
     "--cache-model",
@@ -500,6 +511,15 @@ TEST_SPECS: List[Dict[str, Any]] = [
         "extra_env": {
             "OV_GENAI_SAVE_OV_MODEL": "1",
         },
+    },
+    {
+        "name": "Huggingface Qwen3.5-35B-A3B benchmark_genai text",
+        "model_rel": Path("Huggingface") / "Qwen3.5-35B-A3B",
+        "exe_rel": BENCHMARK_GENAI_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": QWEN3_5_35B_BENCHMARK_ARGS.copy(),
+        "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
+        "use_named_model_arg": True,
     },
 ]
 

@@ -88,6 +88,7 @@ cd %my_workspace%\openvino.genai\build\bin
 
 modeling_qwen3_5.exe --model C:\data\models\Huggingface\Qwen3.5-35B-A3B --cache-model --mode text --prompt "write opencl gemm kernel and host code" --output-tokens 300
 greedy_causal_lm.exe C:\data\models\Huggingface\Qwen3.5-35B-A3B "write opencl gemm kernel and host code" GPU 1 3 300 int4_asym 128 int4_asym
+benchmark_genai.exe -m C:\data\models\Huggingface\Qwen3.5-35B-A3B -p "write opencl gemm kernel and host code" -n 1 --mt 300 -d GPU
 ```
 
 use run.bat
