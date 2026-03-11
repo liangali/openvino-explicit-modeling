@@ -6,7 +6,6 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-PREFERRED_CONFIGS = ("RelWithDebInfo", "Release")
 TARGET_SUFFIXES = {".dll", ".exe"}
 
 
@@ -15,19 +14,10 @@ class CopySource:
     name: str
     relative_path_template: str
     source_kind: str
-    pattern: str | None = None
-    config_sensitive: bool = False
+    allowed_suffixes: tuple[str, ...] = (".dll", ".exe")
 
-    def resolve(self, repo_root: Path, config: str) -> Path:
-        return repo_root / Path(self.relative_path_template.format(config=config))
-
-
-@dataclass(frozen=True)
-class ConfigProbe:
-    config: str
-    available_sources: int
-    total_sources: int
-    issues: tuple[str, ...]
+    def resolve(self, workspace_root: Path, config: str) -> Path:
+        return workspace_root / Path(self.relative_path_template.format(config=config))
 
 
 COPY_SOURCES = (
@@ -35,38 +25,25 @@ COPY_SOURCES = (
         name="OpenVINO runtime DLL directory",
         relative_path_template="openvino/bin/intel64/{config}",
         source_kind="directory",
-        pattern="*.dll",
-        config_sensitive=True,
+        allowed_suffixes=(".dll",),
     ),
     CopySource(
         name="OpenVINO GenAI DLL directory",
         relative_path_template="openvino.genai/build/openvino_genai",
         source_kind="directory",
-        pattern="*.dll",
+        allowed_suffixes=(".dll",),
     ),
     CopySource(
-        name="Modeling API test executable",
-        relative_path_template="openvino.genai/build/src/cpp/src/modeling/{config}/test_modeling_api.exe",
-        source_kind="file",
-        config_sensitive=True,
-    ),
-    CopySource(
-        name="Modeling samples executable directory",
-        relative_path_template="openvino.genai/build/src/cpp/src/modeling/samples/{config}",
+        name="OpenVINO GenAI bin directory",
+        relative_path_template="openvino.genai/build/bin",
         source_kind="directory",
-        pattern="*.exe",
-        config_sensitive=True,
-    ),
-    CopySource(
-        name="Text generation sample executable",
-        relative_path_template="openvino.genai/build/samples/cpp/text_generation/{config}/greedy_causal_lm.exe",
-        source_kind="file",
-        config_sensitive=True,
+        allowed_suffixes=(".dll", ".exe"),
     ),
     CopySource(
         name="TBB runtime DLL",
         relative_path_template="openvino/temp/Windows_AMD64/tbb/bin/tbb12.dll",
         source_kind="file",
+        allowed_suffixes=(".dll",),
     ),
 )
 
@@ -86,8 +63,9 @@ def format_bytes(size_in_bytes: int) -> str:
     return f"{size_in_bytes} B"
 
 
-def collect_source_files(source: CopySource, repo_root: Path, config: str) -> tuple[list[Path], list[str]]:
-    resolved_path = source.resolve(repo_root, config)
+def collect_source_files(source: CopySource, workspace_root: Path, config: str) -> tuple[list[Path], list[str]]:
+    resolved_path = source.resolve(workspace_root, config)
+    allowed_suffixes = {suffix.lower() for suffix in source.allowed_suffixes}
 
     if source.source_kind == "file":
         if not resolved_path.exists():
@@ -98,9 +76,9 @@ def collect_source_files(source: CopySource, repo_root: Path, config: str) -> tu
             return [], [
                 f"{source.name}: expected a file, but found a non-file path: {resolved_path}"
             ]
-        if resolved_path.suffix.lower() not in TARGET_SUFFIXES:
+        if resolved_path.suffix.lower() not in allowed_suffixes:
             return [], [
-                f"{source.name}: file does not match expected dll/exe type: {resolved_path}"
+                f"{source.name}: file does not match expected suffixes {source.allowed_suffixes}: {resolved_path}"
             ]
         return [resolved_path], []
 
@@ -116,78 +94,17 @@ def collect_source_files(source: CopySource, repo_root: Path, config: str) -> tu
             f"{source.name}: expected a directory, but found a non-directory path: {resolved_path}"
         ]
 
-    pattern = source.pattern or "*"
     matched_files = sorted(
         file
-        for file in resolved_path.glob(pattern)
-        if file.is_file() and file.suffix.lower() in TARGET_SUFFIXES
+        for file in resolved_path.iterdir()
+        if file.is_file() and file.suffix.lower() in allowed_suffixes
     )
     if not matched_files:
         return [], [
-            f"{source.name}: directory exists but no files matched '{pattern}': {resolved_path}"
+            f"{source.name}: directory exists but no files matched suffixes {source.allowed_suffixes}: {resolved_path}"
         ]
 
     return matched_files, []
-
-
-def probe_config(repo_root: Path, config: str) -> ConfigProbe:
-    issues: list[str] = []
-    available_sources = 0
-    total_sources = 0
-
-    for source in COPY_SOURCES:
-        if not source.config_sensitive:
-            continue
-        total_sources += 1
-        files, source_issues = collect_source_files(source, repo_root, config)
-        if source_issues:
-            issues.extend(source_issues)
-            continue
-        if files:
-            available_sources += 1
-
-    return ConfigProbe(
-        config=config,
-        available_sources=available_sources,
-        total_sources=total_sources,
-        issues=tuple(issues),
-    )
-
-
-def choose_config(repo_root: Path) -> tuple[str, tuple[ConfigProbe, ...], str]:
-    probes = tuple(probe_config(repo_root, config) for config in PREFERRED_CONFIGS)
-    rel_probe = probes[0]
-    release_probe = probes[1]
-
-    if rel_probe.available_sources == rel_probe.total_sources:
-        return rel_probe.config, probes, "RelWithDebInfo is fully available."
-
-    if release_probe.available_sources == release_probe.total_sources:
-        return (
-            release_probe.config,
-            probes,
-            "RelWithDebInfo is incomplete, falling back to Release because all config-sensitive sources exist there.",
-        )
-
-    if rel_probe.available_sources == 0 and release_probe.available_sources > 0:
-        return (
-            release_probe.config,
-            probes,
-            "RelWithDebInfo was not found, falling back to Release.",
-        )
-
-    if release_probe.available_sources > rel_probe.available_sources:
-        return (
-            release_probe.config,
-            probes,
-            "Neither configuration is complete, but Release has more available sources.",
-        )
-
-    return (
-        rel_probe.config,
-        probes,
-        "Neither configuration is complete, keeping preferred RelWithDebInfo and reporting missing paths.",
-    )
 
 
 def copy_one_file(source_file: Path, destination_dir: Path) -> tuple[str, int]:
@@ -241,12 +158,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Default behavior:\n"
-            "  - Prefer RelWithDebInfo, fall back to Release when RelWithDebInfo is incomplete.\n"
+            "  - Use Release unless --build-type is specified.\n"
             "  - Use the workspace-level 'package' directory as the output root.\n"
             "  - Store files in '<output_root>\\\\<Config>'.\n"
             "  - Keep existing files unless --clean is specified.\n\n"
             "Examples:\n"
             "  python scripts\\package.py\n"
+            "  python scripts\\package.py --build-type RelWithDebInfo\n"
             "  python scripts\\package.py --clean\n"
             "  python scripts\\package.py --output D:\\artifacts\\package_bundle\n"
             "  python scripts\\package.py --output custom_package --clean"
@@ -270,6 +188,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Override the package output root directory. If omitted, the default is "
             "the workspace-level 'package' directory. Relative paths are resolved "
             "relative to the workspace root (two levels above this script)."
+        ),
+    )
+    parser.add_argument(
+        "--build-type",
+        choices=("Release", "RelWithDebInfo"),
+        default="Release",
+        help=(
+            "Build configuration name used for config-sensitive source paths. "
+            "Defaults to Release."
         ),
     )
     return parser
@@ -311,23 +238,13 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = script_dir.parent
     workspace_root = repo_root.parent
     package_root = resolve_output_root(args.output, workspace_root)
+    chosen_config = args.build_type
 
     log("INFO", f"Script directory: {script_dir}")
     log("INFO", f"Repository root: {repo_root}")
     log("INFO", f"Workspace root: {workspace_root}")
     log("INFO", f"Configured package root: {package_root}")
-
-    chosen_config, probes, reason = choose_config(repo_root)
-    for probe in probes:
-        log(
-            "INFO",
-            f"Config probe {probe.config}: {probe.available_sources}/{probe.total_sources} config-sensitive sources available.",
-        )
-        for issue in probe.issues:
-            log("WARN", issue)
-
     log("INFO", f"Selected configuration: {chosen_config}")
-    log("INFO", reason)
 
     destination_dir = package_root / chosen_config
     destination_dir.mkdir(parents=True, exist_ok=True)
@@ -355,9 +272,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     for source in COPY_SOURCES:
-        resolved_path = source.resolve(repo_root, chosen_config)
+        resolved_path = source.resolve(workspace_root, chosen_config)
         log("INFO", f"Scanning source '{source.name}': {resolved_path}")
-        source_files, source_issues = collect_source_files(source, repo_root, chosen_config)
+        source_files, source_issues = collect_source_files(source, workspace_root, chosen_config)
 
         if source_issues:
             summary["error_count"] += len(source_issues)
