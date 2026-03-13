@@ -350,6 +350,7 @@ def run_for_model(
     run_dir: Path,
     env: dict,
     repetition_penalty: Optional[float] = None,
+    think: Optional[int] = None,
 ) -> int:
     model_name = model_path.name
     model_tag = sanitize_filename(f"m{model_index}_{model_name}")
@@ -386,6 +387,8 @@ def run_for_model(
             ]
             if repetition_penalty is not None:
                 cmd.extend(["--repetition-penalty", str(repetition_penalty)])
+            if think is not None:
+                cmd.extend(["--think", str(think)])
 
             header = (
                 "\n"
@@ -477,6 +480,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Repetition penalty passed to the exe (default: use exe built-in default 1.1).",
     )
+    parser.add_argument(
+        "--think",
+        type=int,
+        default=0,
+        choices=[0, 1],
+        help="Enable (1) or disable (0) thinking mode (default: 0, disabled).",
+    )
     return parser
 
 
@@ -558,6 +568,7 @@ def main() -> int:
                 run_dir=run_dir,
                 env=env,
                 repetition_penalty=args.repetition_penalty,
+                think=args.think,
             )
 
     summary_path = write_summary_markdown(run_dir)
