@@ -183,8 +183,7 @@ Examples:
   python scripts/ifeval.py --resume path\\to\\responses.jsonl
 
   # Specify a custom output directory
-  python scripts/ifeval.py --models 2 \\
-      --output-dir D:\\data\\code\\Openvino_new_arch_2026\\results_ifeval\\my_experiment
+  python scripts/ifeval.py --models 2 --output-dir path\\to\\my_experiment
 
 Model index mapping (--models):
   1. Qwen3.5-0.8B
@@ -276,11 +275,16 @@ def run_inference(model_path: str, prompt: str, max_tokens: int,
 def parse_response(output: str) -> str:
     """Extract the model response from exe output.
 
-    The exe prints metrics then the response, then CLIntercept shutdown.
+    The exe prints metrics then the response, then CLIntercept noise.
     Format:
         Throughput: 110.32 tokens/s
         <response text>
         CLIntercept is shutting down...
+    or:
+        Throughput: 110.32 tokens/s
+        <response text>
+        -=-=-=-=...
+        CLIntercept (64-bit) is loading...
     """
     lines = output.split("\n")
 
@@ -301,11 +305,36 @@ def parse_response(output: str) -> str:
 
     end = len(lines)
     for i in range(start, len(lines)):
-        if "CLIntercept is shutting down" in lines[i]:
+        stripped = lines[i].strip()
+        if ("CLIntercept is shutting down" in stripped
+                or "CLIntercept" in stripped and "is loading" in stripped
+                or stripped.startswith("-=-=-")):
             end = i
             break
 
     return "\n".join(lines[start:end]).strip()
+
+
+def strip_think_content(response: str, think: int) -> str:
+    """Remove thinking/reasoning content from model response.
+
+    When think=1, a normal response contains <think>...</think> followed by
+    the actual answer.  We split on the closing </think> tag and return only
+    the content after it.  If </think> is missing, the model failed to
+    complete its reasoning (e.g. ran out of tokens) and we return empty string.
+
+    When think=0, the response has no think tags and is returned as-is.
+    """
+    if think == 0:
+        return response
+
+    # think=1: expect <think>...</think> followed by the answer
+    if "</think>" in response:
+        idx = response.rfind("</think>")
+        return response[idx + len("</think>"):].strip()
+
+    # No </think> found — model failed to finish thinking, return empty
+    return ""
 
 
 def load_ifeval_dataset() -> list[dict]:
@@ -510,9 +539,27 @@ def run_single_eval(model_path: str, model_name: str, quant: QuantPreset,
         print(f"  Inference complete: {inference_time:.1f}s total, "
               f"{inference_time/len(remaining):.1f}s per prompt")
 
+    # Strip thinking content before evaluation (think=1 outputs reasoning
+    # text that would pollute IFEval format checks like word count, commas, etc.)
+    eval_responses = {}
+    stripped_count = 0
+    empty_count = 0
+    for p, r in prompt_to_response.items():
+        cleaned = strip_think_content(r, think)
+        if len(cleaned) != len(r):
+            stripped_count += 1
+        if not cleaned and r:
+            empty_count += 1
+        eval_responses[p] = cleaned
+    if stripped_count:
+        print(f"  Stripped thinking content from {stripped_count}/{len(eval_responses)} responses")
+    if empty_count:
+        print(f"  WARNING: {empty_count} responses had no </think> tag "
+              f"(model failed to finish reasoning, scored as empty)")
+
     # Evaluate
     print("  Evaluating responses...")
-    metrics = evaluate(dataset, prompt_to_response)
+    metrics = evaluate(dataset, eval_responses)
 
     # Format and print per-run summary
     summary = format_summary(

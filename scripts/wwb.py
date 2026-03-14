@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 ROOT_DIR = PROJECT_DIR.parent
-DEFAULT_RESULTS_DIR = ROOT_DIR / "wwb_results"
+DEFAULT_RESULTS_DIR = ROOT_DIR / "results_wwb"
 OPENVINO_BIN = ROOT_DIR / "openvino" / "bin" / "intel64" / "Release"
 TBB_BIN = ROOT_DIR / "openvino" / "temp" / "Windows_AMD64" / "tbb" / "bin"
 GENAI_DLL_DIR = ROOT_DIR / "openvino.genai" / "build" / "openvino_genai"
