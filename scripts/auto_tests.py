@@ -146,6 +146,15 @@ MODELING_QWEN3_5_TEXT_ARGS = [
     "--cache-model",
     "--mode",
     "text",
+    "--prompt",
+    PROMPT,
+    "--output-tokens",
+    "300",
+]
+MODELING_QWEN3_5_TEXT_MTP_ARGS = [
+    "--cache-model",
+    "--mode",
+    "text",
     "--temperature",
     "0",
     "--prompt",
@@ -600,6 +609,29 @@ TEST_SPECS: List[Dict[str, Any]] = [
         "exe_rel": MODELING_QWEN3_5_EXE_REL,
         "work_dir_rel": TEXT_WORK_DIR_REL,
         "command_args": MODELING_QWEN3_5_PERF_256K_ARGS,
+        "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
+        "use_named_model_arg": True,
+    },
+    # ---------------------------------------------------------------------------
+    # MTP (Multi-Token Prediction) speculative decoding tests — greedy only
+    # Requires temperature=0; MTP draft head is built from weights on first run
+    # and cached as qwen3_5_mtp_q4a_b4a_g128.xml alongside the main model IR.
+    # ---------------------------------------------------------------------------
+    {
+        "name": "Huggingface Qwen3.5-35B-A3B modeling_qwen3_5 text MTP greedy",
+        "model_rel": Path("Huggingface") / "Qwen3.5-35B-A3B",
+        "exe_rel": MODELING_QWEN3_5_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_5_TEXT_MTP_ARGS.copy(),
+        "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
+        "use_named_model_arg": True,
+    },
+    {
+        "name": "Huggingface Qwen3.5-2B modeling_qwen3_5 text MTP greedy",
+        "model_rel": Path("Huggingface") / "Qwen3.5-2B",
+        "exe_rel": MODELING_QWEN3_5_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_5_TEXT_MTP_ARGS.copy(),
         "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
         "use_named_model_arg": True,
     },
