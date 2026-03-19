@@ -146,6 +146,8 @@ MODELING_QWEN3_5_TEXT_ARGS = [
     "--cache-model",
     "--mode",
     "text",
+    "--temperature",
+    "0",
     "--prompt",
     PROMPT,
     "--output-tokens",
