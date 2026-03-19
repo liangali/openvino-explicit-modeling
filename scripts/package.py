@@ -34,10 +34,16 @@ COPY_SOURCES = (
         allowed_suffixes=(".dll",),
     ),
     CopySource(
-        name="OpenVINO GenAI bin directory",
+        name="OpenVINO GenAI runtime bin directory",
         relative_path_template="openvino.genai/build/bin",
         source_kind="directory",
-        allowed_suffixes=(".dll", ".exe"),
+        allowed_suffixes=(".dll",),
+    ),
+    CopySource(
+        name="OpenVINO GenAI executable directory",
+        relative_path_template="openvino.genai/build/bin/{config}",
+        source_kind="directory",
+        allowed_suffixes=(".exe",),
     ),
     CopySource(
         name="TBB runtime DLL",

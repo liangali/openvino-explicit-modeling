@@ -12,20 +12,17 @@ from typing import Dict, List, Optional
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 ROOT_DIR = PROJECT_DIR.parent
-DEFAULT_RESULTS_DIR = ROOT_DIR / "wwb_results"
+DEFAULT_RESULTS_DIR = ROOT_DIR / "results_wwb"
 OPENVINO_BIN = ROOT_DIR / "openvino" / "bin" / "intel64" / "Release"
 TBB_BIN = ROOT_DIR / "openvino" / "temp" / "Windows_AMD64" / "tbb" / "bin"
 GENAI_DLL_DIR = ROOT_DIR / "openvino.genai" / "build" / "openvino_genai"
-BIN_DIR = ROOT_DIR / "openvino.genai" / "build" / "bin"
+GENAI_RUNTIME_BIN_DIR = ROOT_DIR / "openvino.genai" / "build" / "bin"
+BIN_DIR = ROOT_DIR / "openvino.genai" / "build" / "bin" / "Release"
 EXE_PATH = BIN_DIR / "modeling_qwen3_5.exe"
 DEFAULT_MODEL_ROOT = Path(r"C:\data\models\Huggingface")
 SUMMARY_FILE_NAME = "summary.md"
 
 MODEL_NAMES = [
-    "Qwen3-0.6B",
-    "Qwen3-2B",
-    "Qwen3-4B",
-    "Qwen3-8B",
     "Qwen3.5-0.8B",
     "Qwen3.5-2B",
     "Qwen3.5-4B",
@@ -93,13 +90,9 @@ class QuantPreset:
 
 
 QUANT_PRESETS: Dict[int, QuantPreset] = {
-    1: QuantPreset("int4_asym", 32, "int4_asym"),
-    2: QuantPreset("int4_sym", 64, "int4_sym"),
-    3: QuantPreset("int4_asym", 128, "int4_asym"),
-    4: QuantPreset("int4_asym", 32, "int8_asym"),
-    5: QuantPreset("int8_asym", 64, "int8_asym"),
-    6: QuantPreset("int8_sym", 128, "int8_sym"),
-    7: QuantPreset("none", 0, "none"),
+    1: QuantPreset("int4_asym", 128, "int4_asym"),
+    2: QuantPreset("int4_asym", 128, "int8_asym"),
+    3: QuantPreset("none", 0, "none"),
 }
 
 
@@ -119,7 +112,7 @@ def build_runtime_env(quant_preset: QuantPreset) -> dict:
         env["OV_GENAI_INFLIGHT_QUANT_GROUP_SIZE"] = str(quant_preset.group_size)
         env["OV_GENAI_INFLIGHT_QUANT_BACKUP_MODE"] = quant_preset.backup_mode
 
-    prepend_dirs = [OPENVINO_BIN, TBB_BIN, GENAI_DLL_DIR, BIN_DIR]
+    prepend_dirs = [OPENVINO_BIN, TBB_BIN, GENAI_DLL_DIR, GENAI_RUNTIME_BIN_DIR, BIN_DIR]
     path_value = os.pathsep.join(str(p) for p in prepend_dirs) + os.pathsep + env.get("PATH", "")
     env["PATH"] = path_value
     return env
@@ -134,6 +127,7 @@ def validate_runtime_layout() -> None:
         OPENVINO_BIN,
         TBB_BIN,
         GENAI_DLL_DIR,
+        GENAI_RUNTIME_BIN_DIR,
         BIN_DIR,
     ]
     for dir_path in required_dirs:
@@ -201,6 +195,10 @@ def parse_prompt_selection(spec: str) -> List[int]:
     return parse_index_selection(spec, 1, len(BUILTIN_PROMPTS), "--prompt-list", allow_all=True)
 
 
+def parse_think_selection(spec: str) -> List[int]:
+    return parse_index_selection(spec, 0, 1, "--think", allow_all=True)
+
+
 def summarize_selection(indices: List[int], min_index: int, max_index: int) -> str:
     normalized = sorted(set(indices))
     if normalized == list(range(min_index, max_index + 1)):
@@ -243,6 +241,7 @@ def parse_single_log_for_summary(log_path: Path) -> List[Dict[str, str]]:
         model_name = name_match.group(1) if name_match else "N/A"
 
     quant_tuple = extract_first_match(r"^Quant preset:\s*\d+\s*(\[[^\]]+\])\s*$", content) or "N/A"
+    think_value = extract_first_match(r"^Think:\s*([01])\s*$", content) or "N/A"
 
     question_matches = list(re.finditer(r"^Question\s+(\d+)\s*/\s*(\d+)\s*$", content, re.MULTILINE))
     if not question_matches:
@@ -250,6 +249,7 @@ def parse_single_log_for_summary(log_path: Path) -> List[Dict[str, str]]:
             {
                 "model_name": model_name,
                 "quant_tuple": quant_tuple,
+                "think": think_value,
                 "input_tokens": "N/A",
                 "output_tokens": "N/A",
                 "ttft_ms": "N/A",
@@ -283,6 +283,7 @@ def parse_single_log_for_summary(log_path: Path) -> List[Dict[str, str]]:
             {
                 "model_name": model_name,
                 "quant_tuple": quant_tuple,
+                "think": think_value,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "ttft_ms": ttft_ms,
@@ -303,12 +304,12 @@ def build_summary_markdown(rows: List[Dict[str, str]]) -> str:
         "",
         f"- Total tests: {len(rows)}",
         "",
-        "| Model | Quant (3-tuple) | Input Tokens | Output Tokens | TTFT (ms) | Throught (tokens/s) |",
-        "|---|---|---:|---:|---:|---:|",
+        "| Model | Quant (3-tuple) | Think | Input Tokens | Output Tokens | TTFT (ms) | Throught (tokens/s) |",
+        "|---|---|---:|---:|---:|---:|---:|",
     ]
 
     if not rows:
-        lines.append("| N/A | N/A | N/A | N/A | N/A | N/A |")
+        lines.append("| N/A | N/A | N/A | N/A | N/A | N/A | N/A |")
     else:
         for row in rows:
             lines.append(
@@ -317,6 +318,7 @@ def build_summary_markdown(rows: List[Dict[str, str]]) -> str:
                     [
                         to_markdown_cell(row["model_name"]),
                         to_markdown_cell(row["quant_tuple"]),
+                        to_markdown_cell(row["think"]),
                         to_markdown_cell(row["input_tokens"]),
                         to_markdown_cell(row["output_tokens"]),
                         to_markdown_cell(row["ttft_ms"]),
@@ -350,15 +352,16 @@ def run_for_model(
     run_dir: Path,
     env: dict,
     repetition_penalty: Optional[float] = None,
-    think: Optional[int] = None,
+    think: int = 1,
 ) -> int:
     model_name = model_path.name
     model_tag = sanitize_filename(f"m{model_index}_{model_name}")
     quant_desc = f"{quant_preset.mode}_g{quant_preset.group_size}_{quant_preset.backup_mode}"
     quant_tag = sanitize_filename(f"q{quant_index}_{quant_desc}")
+    think_tag = sanitize_filename(f"t{think}")
     prompt_tag = sanitize_filename(f"p{prompt_selection_tag}")
     token_tag = sanitize_filename(f"ot{output_tokens}")
-    result_file = run_dir / f"{model_tag}__{quant_tag}__{prompt_tag}__{token_tag}.txt"
+    result_file = run_dir / f"{model_tag}__{quant_tag}__{think_tag}__{prompt_tag}__{token_tag}.txt"
 
     fail_count = 0
     with result_file.open("w", encoding="utf-8", errors="replace") as out:
@@ -367,6 +370,7 @@ def run_for_model(
         out.write(f"Quant preset: {quant_index} {quant_preset.display}\n")
         out.write(f"Prompt selection: {prompt_selection_tag}\n")
         out.write(f"Prompt count: {len(prompts)}\n")
+        out.write(f"Think: {think}\n")
         out.write(f"OV_GENAI_INFLIGHT_QUANT_MODE={env.get('OV_GENAI_INFLIGHT_QUANT_MODE', '<unset>')}\n")
         out.write(f"OV_GENAI_INFLIGHT_QUANT_GROUP_SIZE={env.get('OV_GENAI_INFLIGHT_QUANT_GROUP_SIZE', '<unset>')}\n")
         out.write(f"OV_GENAI_INFLIGHT_QUANT_BACKUP_MODE={env.get('OV_GENAI_INFLIGHT_QUANT_BACKUP_MODE', '<unset>')}\n")
@@ -387,8 +391,7 @@ def run_for_model(
             ]
             if repetition_penalty is not None:
                 cmd.extend(["--repetition-penalty", str(repetition_penalty)])
-            if think is not None:
-                cmd.extend(["--think", str(think)])
+            cmd.extend(["--think", str(think)])
 
             header = (
                 "\n"
@@ -403,7 +406,7 @@ def run_for_model(
             out.write(header)
             out.flush()
 
-            print(f"[{model_name}][Q{quant_index}] Running question {i}/{len(prompts)} ...")
+            print(f"[{model_name}][Q{quant_index}][T{think}] Running question {i}/{len(prompts)} ...")
             completed = subprocess.run(
                 cmd,
                 cwd=str(BIN_DIR),
@@ -420,9 +423,12 @@ def run_for_model(
 
             if completed.returncode != 0:
                 fail_count += 1
-                print(f"[{model_name}][Q{quant_index}] Question {i} failed with return code {completed.returncode}.")
+                print(
+                    f"[{model_name}][Q{quant_index}][T{think}] "
+                    f"Question {i} failed with return code {completed.returncode}."
+                )
 
-    print(f"[{model_name}][Q{quant_index}] Finished. Result: {result_file}")
+    print(f"[{model_name}][Q{quant_index}][T{think}] Finished. Result: {result_file}")
     return fail_count
 
 
@@ -482,10 +488,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--think",
-        type=int,
-        default=0,
-        choices=[0, 1],
-        help="Enable (1) or disable (0) thinking mode (default: 0, disabled).",
+        metavar="THINK_LIST",
+        default="1",
+        help="Think selectors (default: 1). Examples: 1 | 0,1 | all | 0~1",
     )
     return parser
 
@@ -527,6 +532,11 @@ def main() -> int:
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
+    try:
+        selected_think_values = parse_think_selection(args.think)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
     prompts = [BUILTIN_PROMPTS[idx - 1] for idx in selected_prompt_indices]
     missing_models = [models[idx - 1] for idx in selected_indices if not models[idx - 1].exists()]
@@ -546,6 +556,7 @@ def main() -> int:
     print(f"Selected models: {selected_indices}")
     print(f"Selected quant presets: {selected_quant_indices}")
     print(f"Selected prompt indices: {selected_prompt_indices}")
+    print(f"Selected think values: {selected_think_values}")
     print(f"Built-in prompts selected: {len(prompts)}/{len(BUILTIN_PROMPTS)}")
     print(f"Run id: {run_id}")
     print(f"Results root dir: {results_dir}")
@@ -555,21 +566,22 @@ def main() -> int:
     total_failures = 0
     for idx in selected_indices:
         for quant_idx in selected_quant_indices:
-            quant_preset = QUANT_PRESETS[quant_idx]
-            env = build_runtime_env(quant_preset)
-            total_failures += run_for_model(
-                model_index=idx,
-                model_path=models[idx - 1],
-                quant_index=quant_idx,
-                quant_preset=quant_preset,
-                prompts=prompts,
-                prompt_selection_tag=prompt_selection_tag,
-                output_tokens=args.output_tokens,
-                run_dir=run_dir,
-                env=env,
-                repetition_penalty=args.repetition_penalty,
-                think=args.think,
-            )
+            for think in selected_think_values:
+                quant_preset = QUANT_PRESETS[quant_idx]
+                env = build_runtime_env(quant_preset)
+                total_failures += run_for_model(
+                    model_index=idx,
+                    model_path=models[idx - 1],
+                    quant_index=quant_idx,
+                    quant_preset=quant_preset,
+                    prompts=prompts,
+                    prompt_selection_tag=prompt_selection_tag,
+                    output_tokens=args.output_tokens,
+                    run_dir=run_dir,
+                    env=env,
+                    repetition_penalty=args.repetition_penalty,
+                    think=think,
+                )
 
     summary_path = write_summary_markdown(run_dir)
     print(f"Summary markdown: {summary_path}")

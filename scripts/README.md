@@ -1,68 +1,398 @@
-# auto_tests.py
+# Scripts
 
-## Overview
+This directory contains the main helper scripts for the OpenVINO Explicit
+Modeling workspace.
 
-`auto_tests.py` bundles several OpenVINO GenAI checks for greedy causal LM, the Qwen3-VL image-language samples, and the Z-Image turbo flow so you can run the same commands from one place and capture a markdown report.
+| Script | Purpose |
+|--------|---------|
+| `auto_tests.py` | Functional test runner for executable samples |
+| `ifeval.py` | IFEval benchmark (instruction following, English) |
+| `ceval.py` | C-Eval benchmark (Chinese multiple-choice evaluation) |
+| `mmlu_redux.py` | MMLU-Redux benchmark (English multiple-choice evaluation) |
+| `wwb.py` | Weight-wise benchmark helper |
 
-## Prerequisites
+This README focuses on the scripts used most often:
 
-- Python 3.8+ (run `python -V` to confirm).
-- The OpenVINO GenAI repo already built so the exe files under `openvino.genai/build/...` exist.
-- Model directories under `D:\data\models` (or a custom folder passed through `--models-root`).
-- `test.jpg` placed in this `scripts/` folder: `openvino-new-arch/scripts/test.jpg`. The VL tests always point to this file path.
+- `auto_tests.py`
+- `ifeval.py`
+- `ceval.py`
+- `mmlu_redux.py`
 
-## Key behavior
+---
 
-- Default `--root` is the parent of this script (`openvino-new-arch`). The script resolves relative roots against the current working directory.
-- It prepends both `openvino.genai/build/openvino_genai` and `openvino/bin/intel64/RelWithDebInfo` to `PATH`, and sets `OV_GENAI_USE_MODELING_API=1` before executing each test.
-- Each test logs performance, generated text, and the environment in `reports/test_report_<timestamp>.md` next to the repo root.
+## 1. Prerequisites (Common Setup)
 
-## Usage
+Before using the scripts in this directory, complete the setup in the
+**[root README.md](../README.md)**:
 
-```sh
-python auto_tests.py                  # run all tests with defaults
-python auto_tests.py --list           # show numbered list of tests without running them
-python auto_tests.py --tests 0 1 2    # pick specific tests by index
-python auto_tests.py --models-root D:\data\models\custom
-python auto_tests.py --root .. --tests 7 8 9
+1. Clone the workspace with `repo.bat`
+2. Build `openvino` and `openvino.genai` with `build.bat`
+3. Create `.venv` and install `openvino-tokenizers` and `transformers`
+
+Expected workspace layout:
+
+```text
+my_workspace\                               e.g. D:\data\code\Openvino_new_arch_2026
+|-- openvino\
+|-- openvino.genai\
+|   `-- build\bin\
+|       `-- modeling_qwen3_5.exe
+|-- openvino-explicit-modeling\
+|   `-- scripts\
+`-- .venv\
+```
+
+Quick verification:
+
+```bat
+dir my_workspace\openvino.genai\build\bin\modeling_qwen3_5.exe
+```
+
+---
+
+## 2. auto_tests.py — Functional Test Runner
+
+`auto_tests.py` runs a fixed set of functional checks for text-generation,
+vision-language, and image-generation samples, then writes a markdown report.
+
+### What it needs
+
+- a completed OpenVINO + GenAI build
+- models under `D:\data\models` by default
+- `test.jpg` in this `scripts\` directory for VL tests
+
+### Common commands
+
+The examples below assume you run them from `my_workspace`.
+
+```bat
+python openvino-explicit-modeling\scripts\auto_tests.py
+python openvino-explicit-modeling\scripts\auto_tests.py --list
+python openvino-explicit-modeling\scripts\auto_tests.py --tests 0,1,2
+python openvino-explicit-modeling\scripts\auto_tests.py --tests 1~5
+python openvino-explicit-modeling\scripts\auto_tests.py --tests 1~5,7,8~10
+python openvino-explicit-modeling\scripts\auto_tests.py --tests all
+python openvino-explicit-modeling\scripts\auto_tests.py --models-root D:\data\models\custom
 ```
 
 ### CLI arguments
 
-- `--root PATH`: Root folder of `openvino-new-arch` (defaults to the repo parent). Can be absolute or relative.
-- `--models-root PATH`: Folder that hosts model files (defaults to `D:\data\models`).
-- `--list`: Print all available tests with indices and exit.
-- `--tests INDEX...`: Run only the specified test indices (separate with spaces or commas).
+| Argument | Description |
+|----------|-------------|
+| `--root PATH` | Workspace root containing `openvino`, `openvino.genai`, and `openvino-explicit-modeling` |
+| `--models-root PATH` | Model root directory (default: `D:\data\models`) |
+| `--build-type` | Choose `Release` or `RelWithDebInfo`; if omitted, try `Release` first |
+| `--list` | Print the numbered test list and exit |
+| `--tests INDEX...` | Run only selected indices, ranges, or `all` |
 
-## Test indices (current set)
+### Test groups
 
-0–6: text-generation samples (Qwen3 0.6B/4B/SmolLM/Youtu plus GGUF variants).  
-7–9: Qwen3-VL (2B/4B/8B) using `scripts/test.jpg`.  
-10: Z-Image-Turbo sample that emits `cat2.bmp`.
+| Range | Tests |
+|-------|-------|
+| 0–6 | Text-generation samples (Qwen3 0.6B/4B, SmolLM, Youtu, GGUF variants) |
+| 7–9 | Qwen3-VL (2B/4B/8B) using `test.jpg` |
+| 10 | Z-Image-Turbo (writes `cat2.bmp`) |
 
-## Next steps
+### Output
 
-- Edit `models-root` or add more tests in `auto_tests.py` if you add new models or samples.
-- Run `python auto_tests.py --tests 7 8 9` periodically to verify the VL pipeline against `test.jpg`.
+The report is written under:
 
-## Model download commands
-
-Each test assumes the models live under `D:\data\models`. If you have `git lfs` installed and a Hugging Face token configured (`huggingface-cli login`), you can populate the folder with the following commands:
-
-```sh
-cd D:\data\models
-git clone https://huggingface.co/Qwen/Qwen3-0.6B Qwen3-0.6B
-git clone https://huggingface.co/Qwen/Qwen3-4B Qwen3-4B
-git clone https://huggingface.co/HuggingFaceTB/SmolLM3-3B SmolLM3-3B
-git clone https://huggingface.co/tencent/Youtu-LLM-2B Youtu-LLM-2B
-git clone https://huggingface.co/unsloth/Qwen3-0.6B-GGUF gguf/Qwen3-0.6B-BF16.gguf
-git clone https://huggingface.co/unsloth/Qwen3-4B-GGUF gguf/Qwen3-4B-BF16.gguf
-git clone https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct Qwen3-VL-2B-Instruct
-git clone https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct Qwen3-VL-4B-Instruct
-git clone https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct Qwen3-VL-8B-Instruct
-git clone https://huggingface.co/Tongyi-MAI/Z-Image-Turbo Z-Image-Turbo
-git clone https://huggingface.co/DavidAU/Qwen3-MOE-4x0.6B-2.4B-Writing-Thunder-V1.2 Qwen3-MOE-4x0.6B-2.4B-Writing-Thunder-V1.2
-git clone https://huggingface.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF gguf/Qwen3-30B-A3B-Instruct-2507-Q4_0.gguf
+```text
+my_workspace\reports\test_report_<timestamp>.md
 ```
 
-If you prefer to fetch a subset or keep the models in a different place, pass `--models-root` to `auto_tests.py`. The script resolves each test path relative to that folder.
+It includes TTFT, throughput, duration, and related metrics. Failed cases are
+reported in `stderr`.
+
+### Model downloads for `auto_tests.py`
+
+```bat
+cd D:\data\models
+git clone https://huggingface.co/Qwen/Qwen3-0.6B
+git clone https://huggingface.co/Qwen/Qwen3-4B
+git clone https://huggingface.co/HuggingFaceTB/SmolLM3-3B
+git clone https://huggingface.co/tencent/Youtu-LLM-2B
+git clone https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct
+git clone https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
+git clone https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+git clone https://huggingface.co/Tongyi-MAI/Z-Image-Turbo
+```
+
+---
+
+## 3. LLM Accuracy Benchmarks — Overview
+
+Three benchmark scripts are provided for LLM accuracy evaluation:
+
+| Benchmark | Script | Language | Questions | Type | Scoring |
+|-----------|--------|:--------:|:---------:|------|---------|
+| **IFEval** | `ifeval.py` | English | 541 | Open-ended generation | Deterministic format-constraint checking |
+| **C-Eval** | `ceval.py` | Chinese | ~1,346 | 4-choice MCQ | Letter matching (`A/B/C/D`) |
+| **MMLU-Redux** | `mmlu_redux.py` | English | ~4,472 (OK) / ~4,800 (all) | 4-choice MCQ | Letter matching (`A/B/C/D`) |
+
+### What each benchmark measures
+
+#### IFEval
+
+IFEval checks whether the model follows verifiable output constraints such as:
+"write at least 300 words", "do not use commas", or "respond in all caps".
+
+- 25 instruction types
+- 541 prompts
+- 834 total constraints
+- fully deterministic evaluation, no LLM judge
+- 4 metrics: prompt-level strict/loose and instruction-level strict/loose
+
+#### C-Eval
+
+C-Eval measures Chinese multiple-choice accuracy across 52 subjects.
+
+| Category | # Subjects | Examples |
+|----------|:----------:|---------|
+| STEM | 20 | Advanced Math, College Physics, Computer Network |
+| Social Science | 13 | Law, Economics, Education, Geography |
+| Humanities | 11 | Chinese Literature, History, Marxism |
+| Other | 8 | Medicine, Accounting, Civil Servant |
+
+- ~1,346 validation questions
+- 5-shot prompting by default
+- supports `--n-shot` to change the few-shot count
+- reports macro average, micro average, and category breakdown
+
+#### MMLU-Redux
+
+MMLU-Redux re-annotates the original MMLU test set and separates quality-checked
+questions from the full set.
+
+- 57 subjects
+- ~4,800 total questions
+- ~4,472 OK-annotated questions after filtering
+- 5-shot prompting by default
+- `--filter-ok` uses only quality-verified questions
+- `--no-filter-ok` includes all questions
+
+### Benchmark environment setup
+
+#### Python dependencies
+
+Only IFEval needs extra Python packages beyond the common setup.
+
+| Dependency | Required by | Install |
+|------------|:-----------:|---------|
+| `immutabledict`, `langdetect`, `nltk` | IFEval | `pip install -r requirements.txt` |
+| NLTK data: `punkt`, `punkt_tab` | IFEval | `python -m nltk.downloader punkt punkt_tab` |
+| *(none)* | C-Eval, MMLU-Redux | Standard library only |
+
+```bat
+cd my_workspace
+.venv\Scripts\activate
+
+pip install -r openvino-explicit-modeling\scripts\requirements.txt
+python -m nltk.downloader punkt punkt_tab
+```
+
+#### Download Qwen3.5 models
+
+The benchmark scripts default to:
+
+```text
+D:\data\models\Huggingface
+```
+
+Supported model indices:
+
+| Index | Model | Parameters |
+|:-----:|-------|:----------:|
+| 1 | Qwen3.5-0.8B | 0.8 B |
+| 2 | Qwen3.5-2B | 2 B |
+| 3 | Qwen3.5-4B | 4 B |
+| 4 | Qwen3.5-9B | 9 B |
+| 5 | Qwen3.5-35B-A3B | 35 B (MoE, 3 B active) |
+
+```bat
+cd D:\data\models\Huggingface
+git clone https://huggingface.co/Qwen/Qwen3.5-0.8B
+git clone https://huggingface.co/Qwen/Qwen3.5-2B
+git clone https://huggingface.co/Qwen/Qwen3.5-4B
+git clone https://huggingface.co/Qwen/Qwen3.5-9B
+git clone https://huggingface.co/Qwen/Qwen3.5-35B-A3B
+```
+
+If your models live elsewhere, pass `--model-root <path>`.
+
+#### Download benchmark datasets
+
+| Benchmark | Dataset location | Download command |
+|-----------|------------------|------------------|
+| **IFEval** | Bundled in `ifeval_lib\input_data.jsonl` | Nothing to download |
+| **C-Eval** | `scripts\ceval_data\` | `python openvino-explicit-modeling\scripts\ceval.py --download` |
+| **MMLU-Redux** | `scripts\mmlu_redux_data\` and `scripts\mmlu_dev_data\` | `python openvino-explicit-modeling\scripts\mmlu_redux.py --download` |
+
+```bat
+cd my_workspace
+python openvino-explicit-modeling\scripts\ceval.py --download
+python openvino-explicit-modeling\scripts\mmlu_redux.py --download
+```
+
+Both scripts can also auto-download missing data on first run.
+
+#### Smoke test
+
+Run a short check before launching a full benchmark:
+
+```bat
+cd my_workspace
+.venv\Scripts\activate
+
+python openvino-explicit-modeling\scripts\ifeval.py --models 1 --limit 5
+python openvino-explicit-modeling\scripts\ceval.py --models 1 --limit 5
+python openvino-explicit-modeling\scripts\mmlu_redux.py --models 1 --limit 5
+```
+
+### Running benchmarks
+
+#### Shared CLI reference
+
+Selection arguments:
+
+| Argument | Format | Default | Description |
+|----------|--------|:-------:|-------------|
+| `--models` | `1,3,4` or `1~5` | `2` in IFEval, `3` in C-Eval/MMLU-Redux | Model index selectors |
+| `--quant-list` | `1,2` or `all` | `1` | Quantization preset selectors |
+| `--think` | `0,1` or `all` | `0` | Think mode selectors |
+
+Sampling arguments:
+
+| Argument | Default | Notes |
+|----------|:-------:|-------|
+| `--temperature` | `1.0` | `0` = greedy argmax |
+| `--top-p` | `0.95` | Nucleus sampling |
+| `--top-k` | `20` | Top-K filtering |
+| `--presence-penalty` | `1.5` (IFEval), `0.0` (MCQ) | Encourages new tokens |
+| `--repetition-penalty` | `1.0` | Multiplicative repeat penalty |
+| `--frequency-penalty` | `0.0` | Additive frequency penalty |
+| `--rng-seed` | `0` | `0` = random |
+
+Control arguments:
+
+| Argument | Default | Description |
+|----------|:-------:|-------------|
+| `--max-tokens` | `2048` in IFEval, `512` in MCQ benchmarks | Max output tokens per question |
+| `--limit N` | all questions | Run only the first `N` questions |
+| `--resume <path>` | none | Resume from `answers.jsonl` or `responses.jsonl` |
+| `--output-dir <path>` | auto | Custom output directory for a single run |
+
+MCQ-only arguments:
+
+| Argument | Default | Description |
+|----------|:-------:|-------------|
+| `--n-shot` | `5` | Number of few-shot examples |
+| `--download` | off | Download dataset and exit |
+| `--filter-ok` / `--no-filter-ok` | `--filter-ok` | MMLU-Redux only |
+
+Quantization presets:
+
+| Index | Preset | Description |
+|:-----:|--------|-------------|
+| 1 | `[int4_asym, 128, int4_asym]` | Default, fastest |
+| 2 | `[int4_asym, 128, int8_asym]` | Better accuracy |
+| 3 | `[none, none, none]` | No quantization, best accuracy |
+
+#### IFEval examples
+
+```bat
+cd my_workspace
+
+python openvino-explicit-modeling\scripts\ifeval.py --models 3
+python openvino-explicit-modeling\scripts\ifeval.py --models 1~5
+python openvino-explicit-modeling\scripts\ifeval.py --models 3 --quant-list 1,2
+python openvino-explicit-modeling\scripts\ifeval.py --models 3 --think 0,1
+python openvino-explicit-modeling\scripts\ifeval.py --models 1~4 --quant-list 1,2 --think 0,1
+python openvino-explicit-modeling\scripts\ifeval.py --models 3 --limit 10
+```
+
+#### C-Eval examples
+
+```bat
+cd my_workspace
+
+python openvino-explicit-modeling\scripts\ceval.py --models 3
+python openvino-explicit-modeling\scripts\ceval.py --models 1~4
+python openvino-explicit-modeling\scripts\ceval.py --models 3 --n-shot 0
+python openvino-explicit-modeling\scripts\ceval.py --models 3 --limit 10
+python openvino-explicit-modeling\scripts\ceval.py --models 3 --temperature 0
+```
+
+#### MMLU-Redux examples
+
+```bat
+cd my_workspace
+
+python openvino-explicit-modeling\scripts\mmlu_redux.py --models 3
+python openvino-explicit-modeling\scripts\mmlu_redux.py --models 3 --no-filter-ok
+python openvino-explicit-modeling\scripts\mmlu_redux.py --models 1~4
+python openvino-explicit-modeling\scripts\mmlu_redux.py --models 3 --n-shot 0
+python openvino-explicit-modeling\scripts\mmlu_redux.py --models 3 --limit 10
+```
+
+### Output structure
+
+Each benchmark creates a timestamped batch directory under the workspace root:
+
+```text
+my_workspace\
+|-- results_ifeval\
+|   `-- 20250601_143022\
+|       |-- Qwen3.5-4B_int4asym_think0_t1.0_n541\
+|       |   |-- responses.jsonl
+|       |   |-- results.json
+|       |   `-- summary.txt
+|       `-- batch_summary.md
+|-- results_ceval\
+|   `-- 20250601_150000\
+|       |-- Qwen3.5-4B_int4asym_think0_t1.0_n1346\
+|       |   |-- answers.jsonl
+|       |   |-- results.json
+|       |   `-- summary.txt
+|       `-- batch_summary.md
+`-- results_mmlu_redux\
+    `-- 20250601_160000\
+        |-- Qwen3.5-4B_int4asym_think0_t1.0_n4472\
+        |   |-- answers.jsonl
+        |   |-- results.json
+        |   `-- summary.txt
+        `-- batch_summary.md
+```
+
+Output files:
+
+| File | Content |
+|------|---------|
+| `responses.jsonl` / `answers.jsonl` | One JSON line per question, also used by `--resume` |
+| `results.json` | Full metrics, timing, and run config |
+| `summary.txt` | Human-readable summary |
+| `batch_summary.md` | Comparison table for the full batch |
+
+### Resuming interrupted runs
+
+All three benchmark scripts support resume. Re-run the same command and the
+script will continue from the next unanswered question.
+
+You can also resume explicitly:
+
+```bat
+python openvino-explicit-modeling\scripts\ceval.py --models 3 --resume path\to\answers.jsonl
+```
+
+### Expected run times
+
+Approximate times on Intel Arc A770 with quantization preset `--quant-list 1`:
+
+| Benchmark | Questions | Qwen3.5-0.8B | Qwen3.5-4B | Qwen3.5-9B |
+|-----------|:---------:|:------------:|:----------:|:----------:|
+| IFEval | 541 | ~30 min | ~60 min | ~90 min |
+| C-Eval | ~1,346 | ~20 min | ~45 min | ~70 min |
+| MMLU-Redux | ~4,472 | ~60 min | ~140 min | ~220 min |
+
+C-Eval and MMLU-Redux are faster per question because MCQ output is short
+(`--max-tokens 512`) while IFEval generates full text (`--max-tokens 2048`).

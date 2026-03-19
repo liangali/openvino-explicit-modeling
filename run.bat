@@ -10,7 +10,8 @@ if "%ROOT_DIR:~-1%"=="\" set "ROOT_DIR=%ROOT_DIR:~0,-1%"
 set "OPENVINO_BIN=%ROOT_DIR%\openvino\bin\intel64\Release"
 set "TBB_BIN=%ROOT_DIR%\openvino\temp\Windows_AMD64\tbb\bin"
 set "GENAI_DLL_DIR=%ROOT_DIR%\openvino.genai\build\openvino_genai"
-set "GENAI_BIN_DIR=%ROOT_DIR%\openvino.genai\build\bin"
+set "GENAI_RUNTIME_BIN_DIR=%ROOT_DIR%\openvino.genai\build\bin"
+set "GENAI_BIN_DIR=%GENAI_RUNTIME_BIN_DIR%\Release"
 set "MODELING_EXE=%GENAI_BIN_DIR%\modeling_qwen3_5.exe"
 set "GREEDY_LM_EXE=%GENAI_BIN_DIR%\greedy_causal_lm.exe"
 
@@ -21,6 +22,11 @@ if not exist "%OPENVINO_BIN%" (
 
 if not exist "%GENAI_DLL_DIR%" (
     echo [ERROR] OpenVINO GenAI DLL directory not found: %GENAI_DLL_DIR%
+    exit /b 1
+)
+
+if not exist "%GENAI_RUNTIME_BIN_DIR%" (
+    echo [ERROR] OpenVINO GenAI runtime bin directory not found: %GENAI_RUNTIME_BIN_DIR%
     exit /b 1
 )
 
@@ -39,7 +45,7 @@ set OV_GENAI_USE_MODELING_API=1
 set OV_GENAI_INFLIGHT_QUANT_MODE=int4_asym
 set OV_GENAI_INFLIGHT_QUANT_GROUP_SIZE=128
 set OV_GENAI_INFLIGHT_QUANT_BACKUP_MODE=int4_asym
-set "PATH=%OPENVINO_BIN%;%TBB_BIN%;%GENAI_DLL_DIR%;%GENAI_BIN_DIR%;%PATH%"
+set "PATH=%OPENVINO_BIN%;%TBB_BIN%;%GENAI_DLL_DIR%;%GENAI_RUNTIME_BIN_DIR%;%GENAI_BIN_DIR%;%PATH%"
 
 cd %GENAI_BIN_DIR%
 

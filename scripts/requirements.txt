@@ -1,0 +1,8 @@
+#
+# Additional NLTK data is required by the bundled Google IFEval checker.
+# Install after `pip install -r requirements.txt`:
+#   python -m nltk.downloader punkt punkt_tab
+
+immutabledict
+langdetect
+nltk

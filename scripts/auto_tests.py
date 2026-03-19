@@ -28,6 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIPT_ROOT_DEFAULT = SCRIPT_DIR.parent
 TEST_IMAGE_PATH = SCRIPT_DIR / "test.jpg"
 TEST_OCR2_IMAGE_PATH = SCRIPT_DIR / "test_ocr2.png"
+TEST_AUDIO_PATH = SCRIPT_DIR / "asr_zh.wav"
 PROMPT_FILE_PATH = SCRIPT_DIR / PROMPT_FILE_NAME
 
 
@@ -41,14 +42,20 @@ def load_prompt(prompt_file_path: Path, fallback_prompt: str) -> str:
 
 PROMPT = load_prompt(PROMPT_FILE_PATH, DEFAULT_PROMPT)
 
+# Perf validation prompt files
+PROMPT_PERF_1K_PATH = SCRIPT_DIR / "prompt_perf_1k.txt"
+PROMPT_PERF_256K_PATH = SCRIPT_DIR / "prompt_perf_256k.txt"
+
 TEXT_EXE_REL = (
     Path("openvino.genai")
     / "build"
     / "bin"
+    / BUILD_TYPE_TOKEN
     / "greedy_causal_lm.exe"
 )
 TEXT_WORK_DIR_REL = Path("openvino") / "bin" / "intel64" / BUILD_TYPE_TOKEN
-GENAI_BIN_REL = Path("openvino.genai") / "build" / "bin"
+GENAI_BIN_REL = Path("openvino.genai") / "build" / "bin" / BUILD_TYPE_TOKEN
+GENAI_RUNTIME_BIN_REL = Path("openvino.genai") / "build" / "bin"
 MODELING_QWEN_EXE_REL = GENAI_BIN_REL / "modeling_qwen3_vl.exe"
 MODELING_QWEN3_5_EXE_REL = GENAI_BIN_REL / "modeling_qwen3_5.exe"
 MODELING_DEEPSEEK_OCR2_EXE_REL = GENAI_BIN_REL / "modeling_deepseek_ocr2.exe"
@@ -57,11 +64,13 @@ MODELING_WAN_T2V_EXE_REL = GENAI_BIN_REL / "modeling_wan_t2v.exe"
 MODELING_DFLASH_EXE_REL = GENAI_BIN_REL / "modeling_dflash.exe"
 MODELING_QWEN3_TTS_EXE_REL = GENAI_BIN_REL / "modeling_qwen3_tts.exe"
 BENCHMARK_GENAI_EXE_REL = GENAI_BIN_REL / "benchmark_genai.exe"
+MODELING_QWEN3_ASR_EXE_REL = GENAI_BIN_REL / "modeling_qwen3_asr.exe"
 
 MODELING_ULT_EXE_REL = (
     Path("openvino.genai")
     / "build"
     / "bin"
+    / BUILD_TYPE_TOKEN
     / "test_modeling_api.exe"
 )
 PATH_PREPEND_REL = Path("openvino.genai") / "build" / "openvino_genai"
@@ -114,6 +123,25 @@ MODELING_QWEN3_TTS_ARGS = [
     "qwen3_tts_out.wav",
     "GPU",
 ]
+MODELING_QWEN3_ASR_AUDIO_ARGS = [
+    "--cache-model",
+    "--wav",
+    str(TEST_AUDIO_PATH),
+    "--device",
+    "GPU",
+    "--max_new_tokens",
+    "200",
+]
+MODELING_QWEN3_ASR_TEXT_ARGS = [
+    "--cache-model",
+    "--text-only",
+    "--prompt",
+    PROMPT,
+    "--device",
+    "GPU",
+    "--max_new_tokens",
+    "200",
+]
 MODELING_QWEN3_5_TEXT_ARGS = [
     "--cache-model",
     "--mode",
@@ -154,6 +182,21 @@ MODELING_QWEN3_5_VL_ARGS = [
     "--output-tokens",
     "300",
 ]
+
+# Perf validation args: use --prompt-file to handle large prompts (avoids Windows CLI length limits)
+def _make_perf_args(prompt_file_path: Path, prompt_token_size: Optional[int] = None) -> List[str]:
+    args = [
+        "--cache-model",
+        "--mode", "text",
+        "--prompt-file", str(prompt_file_path),
+        "--output-tokens", "1000",
+    ]
+    if prompt_token_size is not None:
+        args += ["--prompt-token-size", str(prompt_token_size)]
+    return args
+
+MODELING_QWEN3_5_PERF_1K_ARGS = _make_perf_args(PROMPT_PERF_1K_PATH)
+MODELING_QWEN3_5_PERF_256K_ARGS = _make_perf_args(PROMPT_PERF_256K_PATH, 256000)
 
 QUANT_DEFAULT_ARGS = ["int4_asym", "128", "int8_asym"]
 QUANT_INT4_CHANNEL_WISE_ARGS = ["int4_asym", "-1", "int8_asym"]
@@ -521,6 +564,43 @@ TEST_SPECS: List[Dict[str, Any]] = [
         "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
         "use_named_model_arg": True,
     },
+    {
+        "name": "Huggingface Qwen3-ASR-0.6B",
+        "model_rel": Path("Huggingface") / "Qwen3-ASR-0.6B",
+        "exe_rel": MODELING_QWEN3_ASR_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_ASR_AUDIO_ARGS.copy(),
+    },
+    {
+        "name": "Huggingface Qwen3-ASR-0.6B text-only",
+        "model_rel": Path("Huggingface") / "Qwen3-ASR-0.6B",
+        "exe_rel": MODELING_QWEN3_ASR_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_ASR_TEXT_ARGS.copy(),
+    },
+    # ---------------------------------------------------------------------------
+    # Perf validation: Qwen3.5-35B-A3B with variable-length prompts
+    # Use --prompt-token-size N to limit input to N tokens from the 256K prompt file.
+    # Prerequisites: run --tests 39 once to build cache, then collect with --tests 39,39,39
+    # ---------------------------------------------------------------------------
+    {
+        "name": "Qwen3.5-35B-A3B perf 1K text",
+        "model_rel": Path("Huggingface") / "Qwen3.5-35B-A3B",
+        "exe_rel": MODELING_QWEN3_5_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_5_PERF_1K_ARGS,
+        "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
+        "use_named_model_arg": True,
+    },
+    {
+        "name": "Qwen3.5-35B-A3B perf 256K text",
+        "model_rel": Path("Huggingface") / "Qwen3.5-35B-A3B",
+        "exe_rel": MODELING_QWEN3_5_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_5_PERF_256K_ARGS,
+        "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
+        "use_named_model_arg": True,
+    },
 ]
 
 def parse_build_type(value: str) -> str:
@@ -538,9 +618,53 @@ def resolve_build_type_path(path_rel: Path, build_type: str) -> Path:
     return Path(str(path_rel).replace(BUILD_TYPE_TOKEN, build_type))
 
 
+def _remove_build_type_token_segment(path_rel: Path) -> Path:
+    rel = str(path_rel)
+    rel = rel.replace(f"{BUILD_TYPE_TOKEN}/", "")
+    rel = rel.replace(f"{BUILD_TYPE_TOKEN}\\", "")
+    return Path(rel)
+
+
+def resolve_executable_path(root: Path, exe_rel: Path, build_type: str) -> Path:
+    """Resolve exe path and auto-detect whether BUILD_TYPE_TOKEN is needed.
+
+    Preferred layout uses BUILD_TYPE_TOKEN. If the executable is not found there,
+    fall back to a no-build-type layout (e.g. .../bin/foo.exe).
+    """
+    primary = root / resolve_build_type_path(exe_rel, build_type)
+    if primary.is_file():
+        return primary
+
+    if BUILD_TYPE_TOKEN not in str(exe_rel):
+        return primary
+
+    fallback = root / _remove_build_type_token_segment(exe_rel)
+    if fallback.is_file():
+        return fallback
+
+    return primary
+
+
 def format_rel_path(path_rel: Path, build_type: Optional[str] = None) -> str:
     replacement = build_type if build_type is not None else "<build-type>"
     return str(path_rel).replace(BUILD_TYPE_TOKEN, replacement)
+
+
+def resolve_executable_path(root: Path, exe_rel: Path, build_type: str) -> Path:
+    # Prefer the original layout first, then fall back to VS multi-config layout:
+    #   openvino.genai/build/bin/<BuildType>/*.exe
+    primary = root / resolve_build_type_path(exe_rel, build_type)
+    candidates = [primary]
+
+    if exe_rel.suffix.lower() == ".exe":
+        candidate_with_config_subdir = root / exe_rel.parent / build_type / exe_rel.name
+        candidates.append(candidate_with_config_subdir)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    return primary
 
 
 def detect_layout_root(root: Path) -> Path:
@@ -570,6 +694,7 @@ def find_tbb_bin_dir(root: Path) -> Optional[str]:
 def build_path_entries(root: Path, build_type: str) -> List[str]:
     path_entries = [
         str(root / PATH_PREPEND_REL),
+        str(root / GENAI_RUNTIME_BIN_REL),
         str(root / resolve_build_type_path(TEXT_WORK_DIR_REL, build_type)),
     ]
     tbb_bin_dir = find_tbb_bin_dir(root)
@@ -612,6 +737,10 @@ def collect_missing_build_artifacts(
                 f"OpenVINO runtime DLL not found for build type {build_type}",
                 dll_path,
             )
+
+    genai_runtime_bin_dir = root / GENAI_RUNTIME_BIN_REL
+    if not genai_runtime_bin_dir.is_dir():
+        add_missing("OpenVINO GenAI runtime bin directory not found", genai_runtime_bin_dir)
 
     for test in tests:
         exe_path = Path(test["exe"])
@@ -820,6 +949,13 @@ def parse_args() -> argparse.Namespace:
         help="Test indices to run. Supports individual indices (0,1,2), ranges (1~5), or 'all'. "
              "Examples: '0,1,2', '1~5,7,8~10', 'all'. If omitted, run all.",
     )
+    parser.add_argument(
+        "--prompt-token-size",
+        type=int,
+        metavar="N",
+        help="Limit the prompt to N tokens for perf tests that use --prompt-file. "
+             "Passed as --prompt-token-size N to the executable.",
+    )
     return parser.parse_args()
 
 
@@ -901,7 +1037,7 @@ def resolve_tests(
         resolved_test = {
             "index": str(idx),
             "name": spec["name"],
-            "exe": str(root / resolve_build_type_path(spec["exe_rel"], build_type)),
+            "exe": str(resolve_executable_path(root, spec["exe_rel"], build_type)),
             "work_dir": str(root / resolve_build_type_path(spec["work_dir_rel"], build_type)),
             "model": str(model_path) if model_path else None,
             "command_args": spec["command_args"],
@@ -1035,6 +1171,14 @@ def main() -> int:
             return 2
 
         command_args = list(test["command_args"])
+
+        # Override prompt token size for perf tests that use --prompt-file
+        if args.prompt_token_size is not None and "--prompt-file" in command_args:
+            if "--prompt-token-size" in command_args:
+                idx = command_args.index("--prompt-token-size")
+                command_args[idx + 1] = str(args.prompt_token_size)
+            else:
+                command_args += ["--prompt-token-size", str(args.prompt_token_size)]
 
         # Handle Z-Image test: add timestamp to output filename
         is_zimage_test = "Z-Image" in test["name"]
