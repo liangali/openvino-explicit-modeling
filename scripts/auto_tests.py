@@ -65,6 +65,7 @@ MODELING_DFLASH_EXE_REL = GENAI_BIN_REL / "modeling_dflash.exe"
 MODELING_QWEN3_TTS_EXE_REL = GENAI_BIN_REL / "modeling_qwen3_tts.exe"
 BENCHMARK_GENAI_EXE_REL = GENAI_BIN_REL / "benchmark_genai.exe"
 MODELING_QWEN3_ASR_EXE_REL = GENAI_BIN_REL / "modeling_qwen3_asr.exe"
+MODELING_GLM_OCR_EXE_REL = GENAI_BIN_REL / "modeling_glm_ocr.exe"
 
 MODELING_ULT_EXE_REL = (
     Path("openvino.genai")
@@ -122,6 +123,12 @@ MODELING_QWEN3_TTS_ARGS = [
     "我爱北京天安门",
     "qwen3_tts_out.wav",
     "GPU",
+]
+MODELING_GLM_OCR_ARGS = [
+    str(TEST_OCR2_IMAGE_PATH),
+    "Text Recognition",
+    "GPU",
+    "1000",
 ]
 MODELING_QWEN3_ASR_AUDIO_ARGS = [
     "--cache-model",
@@ -322,6 +329,13 @@ TEST_SPECS: List[Dict[str, Any]] = [
         "exe_rel": MODELING_DEEPSEEK_OCR2_EXE_REL,
         "work_dir_rel": TEXT_WORK_DIR_REL,
         "command_args": MODELING_DEEPSEEK_OCR2_ARGS.copy(),
+    },
+    {
+        "name": "Huggingface GLM-OCR",
+        "model_rel": Path("Huggingface") / "GLM-OCR",
+        "exe_rel": MODELING_GLM_OCR_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_GLM_OCR_ARGS.copy(),
     },
     {
        "name": "Huggingface Qwen3-VL-8B-Instruct-inflight-quantized (int4_asym, gs128)",
