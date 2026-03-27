@@ -824,6 +824,27 @@ TEST_SPECS: List[Dict[str, Any]] = [
         "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
         "use_named_model_arg": True,
     },
+    # ---------------------------------------------------------------------------
+    # 16K TQ vs baseline comparison — Qwen3.5-4B
+    # ---------------------------------------------------------------------------
+    {
+        "name": "Qwen3.5-4B perf 16K text TQ",
+        "model_rel": Path("Huggingface") / "Qwen3.5-4B",
+        "exe_rel": MODELING_QWEN3_5_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_5_PERF_16K_ARGS,
+        "extra_env": QWEN3_5_35B_EXTRA_ENV.copy(),
+        "use_named_model_arg": True,
+    },
+    {
+        "name": "Qwen3.5-4B perf 16K text baseline",
+        "model_rel": Path("Huggingface") / "Qwen3.5-4B",
+        "exe_rel": MODELING_QWEN3_5_EXE_REL,
+        "work_dir_rel": TEXT_WORK_DIR_REL,
+        "command_args": MODELING_QWEN3_5_PERF_16K_ARGS,
+        "extra_env": QWEN3_5_BASELINE_ENV.copy(),
+        "use_named_model_arg": True,
+    },
 ]
 
 def parse_build_type(value: str) -> str:
