@@ -1372,6 +1372,7 @@ def extract_performance(output: str) -> str:
         "TTFT:",
         "TPOT:",
         "Throughput:",
+        "KV cache size:",
     ]
     perf_lines: List[str] = []
     for line in output.splitlines():
@@ -1950,6 +1951,7 @@ def main() -> int:
         test_duration = _dt.datetime.now() - test_start
         ttft_value = extract_label_value(perf_block, "TTFT")
         throughput_value = extract_label_value(perf_block, "Throughput")
+        kv_cache_value = extract_label_value(perf_block, "KV cache size")
         timing_entries.append(
             {
                 "index": test["index"],
@@ -1957,6 +1959,7 @@ def main() -> int:
                 "duration": test_duration,
                 "ttft": ttft_value,
                 "throughput": throughput_value,
+                "kv_cache": kv_cache_value,
             }
         )
 
@@ -2078,13 +2081,13 @@ def main() -> int:
     if timing_entries:
         summary_lines.extend(
             [
-                "| Test | TTFT | Throughput | Duration |",
-                "| --- | --- | --- | --- |",
+                "| Test | TTFT | Throughput | KV Cache | Duration |",
+                "| --- | --- | --- | --- | --- |",
             ]
         )
         for entry in timing_entries:
             summary_lines.append(
-                f"| {entry['index']}: {entry['name']} | {entry['ttft']} | {entry['throughput']} | {format_duration(entry['duration'])} |"
+                f"| {entry['index']}: {entry['name']} | {entry['ttft']} | {entry['throughput']} | {entry['kv_cache']} | {format_duration(entry['duration'])} |"
             )
     else:
         summary_lines.append("No tests were executed.")
@@ -2097,11 +2100,11 @@ def main() -> int:
     print("=" * 80)
     print("Timing summary:")
     if timing_entries:
-        print("| Test | TTFT | Throughput | Duration |")
-        print("| --- | --- | --- | --- |")
+        print("| Test | TTFT | Throughput | KV Cache | Duration |")
+        print("| --- | --- | --- | --- | --- |")
         for entry in timing_entries:
             print(
-                f"| {entry['index']}: {entry['name']} | {entry['ttft']} | {entry['throughput']} | {format_duration(entry['duration'])} |"
+                f"| {entry['index']}: {entry['name']} | {entry['ttft']} | {entry['throughput']} | {entry['kv_cache']} | {format_duration(entry['duration'])} |"
             )
     else:
         print("No tests were executed.")
