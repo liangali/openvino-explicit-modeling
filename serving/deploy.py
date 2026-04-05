@@ -359,13 +359,49 @@ def main():
         if not IS_WIN and dst.suffix == "" and (src.stat().st_mode & 0o111):
             dst.chmod(dst.stat().st_mode | 0o111)  # preserve executable bit on Linux
 
-    # 7) Generate self-contained __init__.py
+    # 7) On Linux, create versioned symlinks for frontend .so files.
+    #    OpenVINO's FrontEndManager discovers frontends by scanning for
+    #    files named  libopenvino_*_frontend.so.<soversion>  (e.g. .so.2600).
+    #    shutil.copy2 resolves symlinks, so we recreate the versioned names.
+    if not IS_WIN:
+        for f in sorted(runtime_out.glob("libopenvino_*_frontend.so")):
+            # Detect soversion from the original build tree
+            orig = ov_bin / f.name if ov_bin else None
+            soversion = None
+            if orig and orig.is_symlink():
+                # e.g. libopenvino_ir_frontend.so -> libopenvino_ir_frontend.so.2600
+                target = orig.resolve().parent / os.readlink(str(orig))
+                # walk chain:  .so -> .so.2600 -> .so.2026.0.0
+                while target.is_symlink():
+                    target = target.resolve()
+                # extract soversion from e.g. libopenvino_ir_frontend.so.2600
+                for candidate in orig.parent.glob(f.stem + ".so.*"):
+                    parts = candidate.name.split(".so.")
+                    if len(parts) == 2 and parts[1].isdigit():
+                        soversion = parts[1]
+                        break
+            if soversion is None:
+                # Fallback: scan ov_bin for versioned siblings
+                if ov_bin:
+                    for candidate in ov_bin.glob(f.stem + ".so.*"):
+                        parts = candidate.name.split(".so.")
+                        if len(parts) == 2 and parts[1].isdigit():
+                            soversion = parts[1]
+                            break
+            if soversion:
+                link_name = f"{f.name}.{soversion}"
+                link_path = runtime_out / link_name
+                if not link_path.exists():
+                    link_path.symlink_to(f.name)
+                    print(f"  {str(link_path.relative_to(output_dir)):55s}  (symlink -> {f.name})")
+
+    # 8) Generate self-contained __init__.py
     (runtime_out / "__init__.py").write_text(DEPLOYED_INIT_PY, encoding="utf-8")
     print(f"  {'runtime/openvino_genai/__init__.py':55s}  (generated)")
 
     # --- Scripts (both Windows and Linux) ---
     vl_exe_win  = r'--vl-exe "%~dp0runtime\openvino_genai\modeling_qwen3_5.exe"' if include_vl else ''
-    vl_exe_lin  = '--vl-exe "$(dirname "$0")/runtime/openvino_genai/modeling_qwen3_5"' if include_vl else ''
+    vl_exe_lin  = '--vl-exe "$SCRIPT_DIR/runtime/openvino_genai/modeling_qwen3_5"' if include_vl else ''
 
     # Windows scripts
     setup_bat = output_dir / "setup.bat"
@@ -417,7 +453,7 @@ def main():
         venv/bin/pip install --quiet -r serving/requirements.txt
 
         echo "[3/3] Installing openvino_genai runtime..."
-        cp -r runtime/openvino_genai venv/lib/python3.*/site-packages/
+        cp -a runtime/openvino_genai venv/lib/python3.*/site-packages/
 
         echo ""
         echo "=== Setup complete ==="
