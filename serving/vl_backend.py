@@ -57,12 +57,14 @@ class VLBackend:
         max_pixels: int = 602112,
         cache_model: bool = True,
         use_serve: bool = False,
+        mode: str = "vl",  # "vl" or "text"
     ):
         self.model_path = model_path
         self.device = device
         self.max_pixels = max_pixels
         self.cache_model = cache_model
         self.use_serve = use_serve
+        self.mode = mode
         self._lock = asyncio.Lock()
 
         # Serve mode state
@@ -125,16 +127,17 @@ class VLBackend:
         cmd = [
             self.exe_path,
             "--model", self.model_path,
-            "--mode", "vl",
+            "--mode", self.mode,
             "--device", self.device,
-            "--max-pixels", str(self.max_pixels),
-            "--serve",
         ]
+        if self.mode == "vl":
+            cmd.extend(["--max-pixels", str(self.max_pixels)])
+        cmd.append("--serve")
         if self.cache_model:
             cmd.append("--cache-model")
 
         env = self._make_env()
-        logger.info(f"Starting VL serve subprocess: {' '.join(cmd[:6])}...")
+        logger.info(f"Starting {self.mode} serve subprocess: {' '.join(cmd[:6])}...")
         t0 = time.time()
 
         self._serve_proc = await asyncio.create_subprocess_exec(
@@ -220,20 +223,23 @@ class VLBackend:
     async def _serve_request(
         self,
         prompt: str,
-        image_data: bytes,
+        image_data: Optional[bytes],
         max_tokens: int,
         temperature: float,
         think: bool,
         stream: bool = True,
+        raw_prompt: bool = False,
     ):
         """Send request to serve subprocess and yield response chunks.
 
         Writes image + prompt to temp files, sends JSON request via stdin,
         reads JSON lines from stdout.
         """
+        t0 = time.time()
         await self._ensure_serve()
 
         image_path, prompt_path = self._write_temp_files(prompt, image_data)
+        t_files = time.time()
         try:
             request_json = json.dumps({
                 "image_path": image_path,
@@ -242,21 +248,25 @@ class VLBackend:
                 "temperature": temperature,
                 "stream": stream,
                 "think": think,
+                "raw_prompt": raw_prompt,
             })
 
             logger.info(f"Serve request: prompt='{prompt[:50]}...', max_tokens={max_tokens}")
             self._serve_proc.stdin.write((request_json + "\n").encode("utf-8"))
             await self._serve_proc.stdin.drain()
+            t_send = time.time()
 
             # Read response lines
             accumulated_text = ""
+            t_first_line = None
             while True:
                 line = await asyncio.wait_for(
                     self._serve_proc.stdout.readline(),
                     timeout=300,
                 )
+                if t_first_line is None:
+                    t_first_line = time.time()
                 if not line:
-                    # Process died
                     raise RuntimeError("Serve process died during request")
 
                 line_str = line.decode("utf-8", errors="replace").strip()
@@ -277,13 +287,19 @@ class VLBackend:
                     yield chunk
 
                 if msg.get("done"):
-                    # Store result metadata
                     self._last_stream_result = VLResult(
                         text=accumulated_text,
                         generate_time_ms=msg.get("decode_ms", 0),
                         prompt_tokens=msg.get("prompt_tokens", 0),
                         completion_tokens=msg.get("completion_tokens", 0),
                         finish_reason=msg.get("finish_reason", "stop"),
+                    )
+                    t_done = time.time()
+                    logger.info(
+                        f"Serve timing: files={1000*(t_files-t0):.0f}ms, "
+                        f"send={1000*(t_send-t_files):.0f}ms, "
+                        f"first_line={1000*((t_first_line or t_done)-t_send):.0f}ms, "
+                        f"total={1000*(t_done-t0):.0f}ms"
                     )
                     break
 
@@ -301,12 +317,13 @@ class VLBackend:
     async def generate(
         self,
         prompt: str,
-        image_data: bytes,
+        image_data: Optional[bytes] = None,
         max_tokens: int = 512,
         temperature: float = 0.0,
         think: bool = False,
+        raw_prompt: bool = False,
     ) -> VLResult:
-        """Run VL generation. Uses serve mode if available, else subprocess."""
+        """Run generation. Uses serve mode if available, else subprocess."""
         if not self.available:
             raise RuntimeError(f"VL exe not found: {self.exe_path}")
 
@@ -314,7 +331,8 @@ class VLBackend:
             async with self._lock:
                 accumulated = ""
                 async for chunk in self._serve_request(
-                    prompt, image_data, max_tokens, temperature, think, stream=False
+                    prompt, image_data, max_tokens, temperature, think,
+                    stream=False, raw_prompt=raw_prompt,
                 ):
                     accumulated += chunk
                 return self._last_stream_result or VLResult(text=accumulated)
@@ -370,12 +388,13 @@ class VLBackend:
     async def generate_stream(
         self,
         prompt: str,
-        image_data: bytes,
+        image_data: Optional[bytes] = None,
         max_tokens: int = 512,
         temperature: float = 0.0,
         think: bool = False,
+        raw_prompt: bool = False,
     ):
-        """Streaming VL generation. Yields text chunks as they arrive.
+        """Streaming generation. Yields text chunks as they arrive.
 
         Uses serve mode if available (persistent subprocess),
         otherwise spawns a per-request subprocess with --stream.
@@ -394,7 +413,8 @@ class VLBackend:
         if self.use_serve:
             async with self._lock:
                 async for chunk in self._serve_request(
-                    prompt, image_data, max_tokens, temperature, think, stream=True
+                    prompt, image_data, max_tokens, temperature, think,
+                    stream=True, raw_prompt=raw_prompt,
                 ):
                     yield chunk
             return
@@ -497,11 +517,13 @@ class VLBackend:
         finally:
             self._cleanup_temp_files(image_path, prompt_path)
 
-    def _write_temp_files(self, prompt: str, image_data: bytes) -> tuple[str, str]:
-        """Write prompt and image to temp files, return paths."""
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-            f.write(image_data)
-            image_path = f.name
+    def _write_temp_files(self, prompt: str, image_data: Optional[bytes] = None) -> tuple[str, str]:
+        """Write prompt and optionally image to temp files, return paths."""
+        image_path = ""
+        if image_data:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+                f.write(image_data)
+                image_path = f.name
         with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False, encoding="utf-8") as f:
             f.write(prompt)
             prompt_path = f.name
@@ -512,15 +534,19 @@ class VLBackend:
         cmd = [
             self.exe_path,
             "--model", self.model_path,
-            "--mode", "vl",
-            "--image", image_path,
+            "--mode", self.mode,
+        ]
+        if image_path:
+            cmd.extend(["--image", image_path])
+        cmd.extend([
             "--prompt-file", prompt_path,
             "--device", self.device,
             "--output-tokens", str(max_tokens),
             "--temperature", str(temperature),
             "--think", "1" if think else "0",
-            "--max-pixels", str(self.max_pixels),
-        ]
+        ])
+        if self.mode == "vl":
+            cmd.extend(["--max-pixels", str(self.max_pixels)])
         if self.cache_model:
             cmd.append("--cache-model")
         if stream:
@@ -548,6 +574,8 @@ class VLBackend:
     def _cleanup_temp_files(*paths):
         """Remove temp files, ignoring errors."""
         for p in paths:
+            if not p:
+                continue
             try:
                 os.unlink(p)
             except OSError:

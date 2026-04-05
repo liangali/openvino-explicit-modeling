@@ -118,11 +118,25 @@ class Worker:
         self,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
+        enable_thinking: Optional[bool] = None,
     ) -> str:
         """Format messages using the model's chat template."""
         kwargs = {"add_generation_prompt": True}
         if tools:
             kwargs["tools"] = tools
+
+        # Detect /nothink prefix in last user message
+        if enable_thinking is None:
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    if isinstance(content, str) and content.lstrip().startswith("/nothink"):
+                        enable_thinking = False
+                    break
+
+        if enable_thinking is not None:
+            kwargs["extra_context"] = {"enable_thinking": enable_thinking}
+
         return self.tokenizer.apply_chat_template(messages, **kwargs)
 
 
@@ -290,11 +304,12 @@ class Engine:
         self,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
+        enable_thinking: Optional[bool] = None,
     ) -> str:
         """Use the first worker's tokenizer for chat template formatting."""
         if not self.workers:
             raise RuntimeError("Engine not started")
-        return self.workers[0].apply_chat_template(messages, tools)
+        return self.workers[0].apply_chat_template(messages, tools, enable_thinking=enable_thinking)
 
     @property
     def model_name(self) -> str:
