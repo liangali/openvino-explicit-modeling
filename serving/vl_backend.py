@@ -1,7 +1,7 @@
-"""VL (Vision-Language) backend using modeling_qwen3_5.exe subprocess.
+"""VL (Vision-Language) backend using modeling_qwen3_5 subprocess.
 
 VLMPipeline does NOT support Qwen3.5 via Modeling API. The VL support
-is only in the C++ modeling sample (modeling_qwen3_5.exe --mode vl).
+is only in the C++ modeling sample (modeling_qwen3_5 --mode vl).
 This module wraps that exe as a subprocess for VL requests.
 
 Supports both non-streaming and streaming modes. In streaming mode,
@@ -42,7 +42,7 @@ class VLResult:
 
 
 class VLBackend:
-    """Subprocess-based VL backend using modeling_qwen3_5.exe.
+    """Subprocess-based VL backend using modeling_qwen3_5 binary.
 
     Supports two modes:
     1. Per-request subprocess (default): spawns exe for each request
@@ -80,22 +80,26 @@ class VLBackend:
             logger.warning(f"VL exe not found: {self.exe_path} — VL requests will fail")
 
     def _find_exe(self) -> str:
-        """Auto-detect modeling_qwen3_5.exe location.
+        """Auto-detect modeling_qwen3_5 location (cross-platform).
 
         Search order:
         1. Deployment: runtime/openvino_genai/ (sibling to serving/)
         2. Dev build paths (for development use)
         """
-        # Deployment layout: serving/ is CWD, runtime/ is sibling
+        import sys
+        is_win = sys.platform == "win32"
+        exe_name = "modeling_qwen3_5.exe" if is_win else "modeling_qwen3_5"
+
         serving_dir = Path(__file__).parent
         deploy_root = serving_dir.parent
         deployment_candidates = [
-            deploy_root / "runtime" / "openvino_genai" / "modeling_qwen3_5.exe",
+            deploy_root / "runtime" / "openvino_genai" / exe_name,
         ]
         # Dev build paths
         dev_candidates = [
             Path(r"D:\chuansheng\src_code\explicit_modeling\openvino.genai\build\bin\Release\modeling_qwen3_5.exe"),
             Path(r"D:\chuansheng\src_code\explicit_modeling\openvino.genai\build\bin\modeling_qwen3_5.exe"),
+            Path("/home/gta/chuansheng/src_code/openvino.genai/build/bin/Release/modeling_qwen3_5"),
         ]
         for p in deployment_candidates + dev_candidates:
             if p.is_file():
@@ -524,14 +528,20 @@ class VLBackend:
         return cmd
 
     def _make_env(self):
-        """Build environment for subprocess."""
+        """Build environment for subprocess (cross-platform)."""
+        import sys
         env = os.environ.copy()
         env["OV_GENAI_USE_MODELING_API"] = "1"
         env["OV_GENAI_INFLIGHT_QUANT_MODE"] = "int4_asym"
         env["OV_GENAI_INFLIGHT_QUANT_GROUP_SIZE"] = "128"
         env["OV_GENAI_INFLIGHT_QUANT_BACKUP_MODE"] = "int4_asym"
         exe_dir = str(Path(self.exe_path).parent)
-        env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+        if sys.platform == "win32":
+            # Windows: add DLL directory to PATH
+            env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+        else:
+            # Linux/macOS: add .so directory to LD_LIBRARY_PATH
+            env["LD_LIBRARY_PATH"] = exe_dir + os.pathsep + env.get("LD_LIBRARY_PATH", "")
         return env
 
     @staticmethod
