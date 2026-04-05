@@ -57,12 +57,25 @@ async def lifespan(app: FastAPI):
         model_path=config.model_path,
         device=config.device,
         exe_path=config.vl_exe if config.vl_exe else "",
+        use_serve=config.serve_vl,
     )
     logger.info(f"Starting engine: model={config.model_path}, device={config.device}, workers={config.num_workers}")
     logger.info(f"VL backend: {'available' if vl_backend.available else 'NOT available'} (exe: {vl_backend.exe_path})")
+    if config.serve_vl:
+        logger.info("VL serve mode enabled — starting persistent subprocess...")
     await engine.start()
+    if config.serve_vl and vl_backend.available:
+        try:
+            await vl_backend.start_serve()
+            logger.info("VL serve process started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start VL serve process: {e}")
+            logger.info("Falling back to per-request subprocess mode")
+            vl_backend.use_serve = False
     logger.info("Server ready")
     yield
+    if vl_backend and vl_backend.use_serve:
+        await vl_backend.stop_serve()
     if engine:
         await engine.shutdown()
 

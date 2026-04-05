@@ -7,6 +7,10 @@ This module wraps that exe as a subprocess for VL requests.
 Supports both non-streaming and streaming modes. In streaming mode,
 the exe emits JSON lines to stdout (one per token chunk) while logs
 go to stderr.
+
+Serve mode (--serve): Keeps exe running as a persistent subprocess.
+Model is compiled once at startup; each request sends JSON to stdin
+and reads JSON lines from stdout. Eliminates ~5s compile_model overhead.
 """
 
 import asyncio
@@ -38,7 +42,12 @@ class VLResult:
 
 
 class VLBackend:
-    """Subprocess-based VL backend using modeling_qwen3_5.exe."""
+    """Subprocess-based VL backend using modeling_qwen3_5.exe.
+
+    Supports two modes:
+    1. Per-request subprocess (default): spawns exe for each request
+    2. Serve mode (use_serve=True): persistent subprocess, model loaded once
+    """
 
     def __init__(
         self,
@@ -47,12 +56,19 @@ class VLBackend:
         device: str = "GPU",
         max_pixels: int = 602112,
         cache_model: bool = True,
+        use_serve: bool = False,
     ):
         self.model_path = model_path
         self.device = device
         self.max_pixels = max_pixels
         self.cache_model = cache_model
+        self.use_serve = use_serve
         self._lock = asyncio.Lock()
+
+        # Serve mode state
+        self._serve_proc: Optional[asyncio.subprocess.Process] = None
+        self._serve_ready = False
+        self._stderr_task: Optional[asyncio.Task] = None
 
         # Find exe
         if exe_path:
@@ -90,6 +106,194 @@ class VLBackend:
     def available(self) -> bool:
         return os.path.isfile(self.exe_path)
 
+    # ----------------------------------------------------------------
+    # Serve mode: persistent subprocess management
+    # ----------------------------------------------------------------
+
+    async def start_serve(self):
+        """Start persistent serve subprocess. Blocks until ready signal."""
+        if not self.use_serve:
+            return
+        if self._serve_proc and self._serve_proc.returncode is None:
+            logger.info("Serve process already running")
+            return
+
+        cmd = [
+            self.exe_path,
+            "--model", self.model_path,
+            "--mode", "vl",
+            "--device", self.device,
+            "--max-pixels", str(self.max_pixels),
+            "--serve",
+        ]
+        if self.cache_model:
+            cmd.append("--cache-model")
+
+        env = self._make_env()
+        logger.info(f"Starting VL serve subprocess: {' '.join(cmd[:6])}...")
+        t0 = time.time()
+
+        self._serve_proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+        # Drain stderr in background
+        self._stderr_task = asyncio.create_task(self._drain_serve_stderr())
+
+        # Wait for {"ready":true} signal on stdout
+        try:
+            ready = await asyncio.wait_for(self._wait_for_ready(), timeout=120)
+            if not ready:
+                raise RuntimeError("Serve process exited before ready signal")
+        except asyncio.TimeoutError:
+            logger.error("Serve process timed out waiting for ready signal")
+            await self.stop_serve()
+            raise RuntimeError("VL serve startup timed out (120s)")
+
+        elapsed = time.time() - t0
+        self._serve_ready = True
+        logger.info(f"VL serve process ready in {elapsed:.1f}s")
+
+    async def _wait_for_ready(self) -> bool:
+        """Read stdout lines until we get the ready signal."""
+        while True:
+            line = await self._serve_proc.stdout.readline()
+            if not line:
+                return False  # process exited
+            line_str = line.decode("utf-8", errors="replace").strip()
+            if not line_str or not line_str.startswith("{"):
+                continue
+            try:
+                msg = json.loads(line_str)
+                if msg.get("ready"):
+                    return True
+            except json.JSONDecodeError:
+                continue
+
+    async def _drain_serve_stderr(self):
+        """Continuously drain stderr from serve process to logger."""
+        try:
+            while self._serve_proc and self._serve_proc.returncode is None:
+                line = await self._serve_proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    logger.debug(f"[serve-exe] {text}")
+        except Exception as e:
+            logger.warning(f"Serve stderr drain error: {e}")
+
+    async def stop_serve(self):
+        """Stop persistent serve subprocess."""
+        self._serve_ready = False
+        if self._serve_proc and self._serve_proc.returncode is None:
+            logger.info("Stopping VL serve subprocess")
+            try:
+                self._serve_proc.stdin.close()
+                await asyncio.wait_for(self._serve_proc.wait(), timeout=10)
+            except (asyncio.TimeoutError, Exception):
+                try:
+                    self._serve_proc.kill()
+                    await self._serve_proc.wait()
+                except Exception:
+                    pass
+        self._serve_proc = None
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            self._stderr_task = None
+
+    async def _ensure_serve(self):
+        """Ensure serve process is running, restart if crashed."""
+        if not self._serve_proc or self._serve_proc.returncode is not None:
+            logger.warning("Serve process not running, restarting...")
+            self._serve_ready = False
+            await self.start_serve()
+
+    async def _serve_request(
+        self,
+        prompt: str,
+        image_data: bytes,
+        max_tokens: int,
+        temperature: float,
+        think: bool,
+        stream: bool = True,
+    ):
+        """Send request to serve subprocess and yield response chunks.
+
+        Writes image + prompt to temp files, sends JSON request via stdin,
+        reads JSON lines from stdout.
+        """
+        await self._ensure_serve()
+
+        image_path, prompt_path = self._write_temp_files(prompt, image_data)
+        try:
+            request_json = json.dumps({
+                "image_path": image_path,
+                "prompt_file": prompt_path,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": stream,
+                "think": think,
+            })
+
+            logger.info(f"Serve request: prompt='{prompt[:50]}...', max_tokens={max_tokens}")
+            self._serve_proc.stdin.write((request_json + "\n").encode("utf-8"))
+            await self._serve_proc.stdin.drain()
+
+            # Read response lines
+            accumulated_text = ""
+            while True:
+                line = await asyncio.wait_for(
+                    self._serve_proc.stdout.readline(),
+                    timeout=300,
+                )
+                if not line:
+                    # Process died
+                    raise RuntimeError("Serve process died during request")
+
+                line_str = line.decode("utf-8", errors="replace").strip()
+                if not line_str or not line_str.startswith("{"):
+                    continue
+
+                try:
+                    msg = json.loads(line_str)
+                except json.JSONDecodeError:
+                    continue
+
+                if "error" in msg:
+                    raise RuntimeError(f"VL serve error: {msg['error']}")
+
+                if "text" in msg:
+                    chunk = msg["text"]
+                    accumulated_text += chunk
+                    yield chunk
+
+                if msg.get("done"):
+                    # Store result metadata
+                    self._last_stream_result = VLResult(
+                        text=accumulated_text,
+                        generate_time_ms=msg.get("decode_ms", 0),
+                        prompt_tokens=msg.get("prompt_tokens", 0),
+                        completion_tokens=msg.get("completion_tokens", 0),
+                        finish_reason=msg.get("finish_reason", "stop"),
+                    )
+                    break
+
+        except (asyncio.CancelledError, GeneratorExit):
+            # Don't kill the serve process — just stop reading
+            logger.info("Serve request cancelled by client")
+            raise
+        finally:
+            self._cleanup_temp_files(image_path, prompt_path)
+
+    # ----------------------------------------------------------------
+    # Public API: generate (non-streaming) and generate_stream
+    # ----------------------------------------------------------------
+
     async def generate(
         self,
         prompt: str,
@@ -98,9 +302,18 @@ class VLBackend:
         temperature: float = 0.0,
         think: bool = False,
     ) -> VLResult:
-        """Run VL generation via subprocess. Only one at a time."""
+        """Run VL generation. Uses serve mode if available, else subprocess."""
         if not self.available:
             raise RuntimeError(f"VL exe not found: {self.exe_path}")
+
+        if self.use_serve:
+            async with self._lock:
+                accumulated = ""
+                async for chunk in self._serve_request(
+                    prompt, image_data, max_tokens, temperature, think, stream=False
+                ):
+                    accumulated += chunk
+                return self._last_stream_result or VLResult(text=accumulated)
 
         async with self._lock:
             return await self._run_subprocess(prompt, image_data, max_tokens, temperature, think)
@@ -160,7 +373,10 @@ class VLBackend:
     ):
         """Streaming VL generation. Yields text chunks as they arrive.
 
-        Protocol: exe with --stream emits JSON lines to stdout:
+        Uses serve mode if available (persistent subprocess),
+        otherwise spawns a per-request subprocess with --stream.
+
+        Protocol: exe emits JSON lines to stdout:
           {"text":"chunk"}          — incremental decoded text
           {"done":true,...}         — generation complete with metadata
         Logs/metrics go to stderr.
@@ -170,6 +386,14 @@ class VLBackend:
         """
         if not self.available:
             raise RuntimeError(f"VL exe not found: {self.exe_path}")
+
+        if self.use_serve:
+            async with self._lock:
+                async for chunk in self._serve_request(
+                    prompt, image_data, max_tokens, temperature, think, stream=True
+                ):
+                    yield chunk
+            return
 
         async with self._lock:
             async for chunk in self._run_subprocess_stream(
