@@ -210,7 +210,11 @@ class Engine:
         top_k: Optional[int] = None,
         stop: Optional[list[str]] = None,
     ):
-        """Streaming generation. Yields text chunks via async generator."""
+        """Streaming generation. Yields text chunks via async generator.
+
+        Worker lifecycle is managed with explicit acquire/release to avoid
+        issues with async generator cleanup (GeneratorExit cannot await).
+        """
         worker = await self.acquire_worker()
         queue: asyncio.Queue[Optional[str | Exception]] = asyncio.Queue()
         loop = asyncio.get_event_loop()
@@ -244,21 +248,43 @@ class Engine:
                     raise chunk
                 yield chunk
         except (asyncio.CancelledError, GeneratorExit):
+            # Client disconnected — signal generation thread to stop.
+            # Cannot await here (GeneratorExit forbids it), so schedule
+            # cleanup as a fire-and-forget task on the event loop.
             cancelled.set()
-            # Wait for generation thread to finish before releasing worker
-            await asyncio.get_event_loop().run_in_executor(None, future.result, 5.0)
-        finally:
-            # Ensure generation thread is done before releasing worker
-            if not future.done():
-                cancelled.set()
-                try:
-                    await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(None, future.result),
-                        timeout=10.0,
-                    )
-                except (asyncio.TimeoutError, Exception):
-                    pass
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(
+                    self._cleanup_worker(worker, future, "client disconnect")
+                )
+            )
+            return  # worker will be released by _cleanup_worker
+        except Exception:
+            cancelled.set()
+            # For regular exceptions we CAN await cleanup
+            await self._wait_for_thread(future, timeout=10.0)
             await self.release_worker(worker)
+            raise
+
+        # Normal completion — generation thread already finished
+        await self.release_worker(worker)
+
+    async def _cleanup_worker(self, worker: Worker, future, reason: str):
+        """Release worker after generation thread finishes (fire-and-forget)."""
+        logger.info(f"Worker {worker.worker_id} cleanup started ({reason})")
+        await self._wait_for_thread(future, timeout=15.0)
+        await self.release_worker(worker)
+
+    async def _wait_for_thread(self, future, timeout: float = 10.0):
+        """Wait for a generation thread to finish."""
+        if future.done():
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, future.result),
+                timeout=timeout,
+            )
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Generation thread did not finish in {timeout}s: {e}")
 
     def apply_chat_template(
         self,
