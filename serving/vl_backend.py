@@ -128,6 +128,9 @@ class VLBackend:
             # Set env vars
             env = os.environ.copy()
             env["OV_GENAI_USE_MODELING_API"] = "1"
+            env["OV_GENAI_INFLIGHT_QUANT_MODE"] = "int4_asym"
+            env["OV_GENAI_INFLIGHT_QUANT_GROUP_SIZE"] = "128"
+            env["OV_GENAI_INFLIGHT_QUANT_BACKUP_MODE"] = "int4_asym"
 
             logger.info(f"VL subprocess: prompt='{prompt[:50]}...', image={len(image_data)} bytes")
             t0 = time.time()
@@ -168,35 +171,50 @@ class VLBackend:
     def _parse_output(self, stdout: str) -> str:
         """Extract generated text from exe stdout.
 
-        The exe prints various log lines ([Safetensors] ..., timing info, etc)
-        then the actual generated text. We need to extract just the text.
+        The exe output format:
+          [log lines...]
+          Throughput: XX.XX tokens/s
+          <actual model output here>
+
+        The generated text always comes after the last "Throughput:" or "tokens/s" line.
         """
         lines = stdout.split("\n")
-        # Find the generated text — it comes after all the log lines
-        # Log lines typically start with [ or contain timing info
-        text_lines = []
-        in_output = False
-        for line in lines:
-            # Skip known log prefixes
-            if line.startswith("[") or line.startswith("  -> ") or line.startswith("="):
-                continue
-            if "Time:" in line or "Statistics:" in line:
-                continue
-            if "Loading" in line and ("model" in line.lower() or "safetensors" in line.lower()):
-                continue
-            if "tokens/sec" in line or "prefill" in line.lower():
-                continue
-            # Once we find actual content, start collecting
+
+        # Find the last metric line — generated text is everything after it
+        last_metric_idx = -1
+        for i, line in enumerate(lines):
             stripped = line.strip()
-            if stripped:
-                in_output = True
-                text_lines.append(stripped)
-            elif in_output:
-                text_lines.append("")  # preserve paragraph breaks
+            if any(marker in stripped for marker in [
+                "tokens/s", "Throughput:", "TPOT:", "TTFT:",
+                "Decode time:", "Output token size:", "Prompt token size:",
+                "Mode: hf",
+            ]):
+                last_metric_idx = i
+
+        if last_metric_idx >= 0:
+            text_lines = lines[last_metric_idx + 1:]
+        else:
+            # Fallback: skip known log prefixes
+            text_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("[") or stripped.startswith("  -> "):
+                    continue
+                if any(kw in stripped for kw in [
+                    "Time:", "Statistics:", "Loading", "Compiling",
+                    "Mapping", "Mapped", "Quantiz", "Total weights",
+                    "Primary mode:", "Backup mode:", "Timing (ms):",
+                    "Fetch:", "Quant:", "Graph:", "Total:",
+                    "cache-model", "Zero-Copy", "coverage",
+                ]):
+                    continue
+                text_lines.append(line)
 
         text = "\n".join(text_lines).strip()
-        # Strip <think>...</think>
+        # Strip <think>...</think> (closed)
         text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
+        # Strip unclosed <think>... (truncated output)
+        text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
         return text
 
 
