@@ -168,7 +168,8 @@ def main():
     parser = argparse.ArgumentParser(description="Deploy Qwen3.5 server — fully self-contained")
     parser.add_argument("--model", required=True, help="Source HF model directory with cached IR")
     parser.add_argument("--output", required=True, help="Output deployment directory")
-    parser.add_argument("--include-vl", action="store_true", help="Include VL (vision) IR files")
+    parser.add_argument("--include-vl", action="store_true", default=True, help="Include VL (vision) IR files (default: True)")
+    parser.add_argument("--no-vl", action="store_true", help="Exclude VL (vision) IR files")
     parser.add_argument("--genai-pkg", help="openvino_genai site-packages dir (auto-detected)")
     parser.add_argument("--ov-bin", help="OpenVINO DLL directory (auto-detected)")
     parser.add_argument("--tbb-bin", help="TBB DLL directory (auto-detected)")
@@ -186,6 +187,8 @@ def main():
     genai_pkg = Path(args.genai_pkg) if args.genai_pkg else auto_genai
     ov_bin = Path(args.ov_bin) if args.ov_bin else auto_ov
     tbb_bin = Path(args.tbb_bin) if args.tbb_bin else auto_tbb
+
+    include_vl = args.include_vl and not args.no_vl
 
     # Validate
     ir_xml = model_dir / "qwen3_5_text_q4a_b4a_g128.xml"
@@ -217,7 +220,7 @@ def main():
         dst_name = dst_name or src_name
         _collect_file(model_dir / src_name, model_out / dst_name, files, "model")
 
-    if args.include_vl:
+    if include_vl:
         for src_name, dst_name in MODEL_FILES_VL:
             dst_name = dst_name or src_name
             _collect_file(model_dir / src_name, model_out / dst_name, files, "VL")
