@@ -63,6 +63,10 @@ BASELINE_EXE_CANDIDATES = [
 REPORT_DIR = ROOT_DIR / "dflash_exe_reports"
 
 TEST_IMAGE_PATH = SCRIPT_DIR / "test.jpg"
+TEST_OCR_IMAGE_PATH = SCRIPT_DIR / "test_ocr2.png"
+TEST_CHART_IMAGE_PATH = SCRIPT_DIR / "test_chart.png"
+TEST_MATH_IMAGE_PATH = SCRIPT_DIR / "test_math.png"
+TEST_TABLE_IMAGE_PATH = SCRIPT_DIR / "test_table.png"
 
 TEXT_QUESTIONS = [
     {
@@ -129,8 +133,48 @@ TEXT_QUESTIONS = [
 
 VL_QUESTIONS = [
     {
-        "category": "VL: Image Description",
-        "prompt": "describe this picture in details: ",
+        "category": "VL: SimpleVQA",
+        "prompt": "Answer the following questions about this image: What is the main subject? What is happening? What is the setting or background?",
+        "image": str(TEST_IMAGE_PATH),
+    },
+    {
+        "category": "VL: RefCOCO",
+        "prompt": "List all distinct objects visible in this image. For each object, describe its approximate location (e.g., top-left, center, bottom-right) and size relative to the image.",
+        "image": str(TEST_IMAGE_PATH),
+    },
+    {
+        "category": "VL: OCRBench",
+        "prompt": "Extract all text visible in this image. Reproduce the text exactly as it appears, preserving layout and formatting as much as possible.",
+        "image": str(TEST_OCR_IMAGE_PATH),
+    },
+    {
+        "category": "VL: CharXiv_DQ",
+        "prompt": "Analyze this chart. What type of chart is it? What are the axes and their labels? What trends or patterns do you observe? Compare the values across categories and identify the key takeaways.",
+        "image": str(TEST_CHART_IMAGE_PATH),
+    },
+    {
+        "category": "VL: ChartMimic",
+        "prompt": "Describe the visual layout and structure of this chart in enough detail that someone could recreate it. Include chart type, colors, bar positions, labels, values, legend, and grid lines.",
+        "image": str(TEST_CHART_IMAGE_PATH),
+    },
+    {
+        "category": "VL: MathVision",
+        "prompt": "Analyze this geometric figure. Identify all shapes, measurements, and labeled points. Calculate the area of the triangle and verify whether the inscribed circle radius is consistent with the given dimensions. Show your work.",
+        "image": str(TEST_MATH_IMAGE_PATH),
+    },
+    {
+        "category": "VL: MathVerse",
+        "prompt": "Given the geometric figure shown, solve the following: (1) Calculate the perimeter of the triangle. (2) Calculate the area using the base and height. (3) Verify the inscribed circle radius using the formula r = Area / semi-perimeter.",
+        "image": str(TEST_MATH_IMAGE_PATH),
+    },
+    {
+        "category": "VL: Design2Code",
+        "prompt": "Convert this table image into well-structured markdown. Preserve all columns, rows, alignment, and formatting. Include the title and ensure numerical values are exact.",
+        "image": str(TEST_TABLE_IMAGE_PATH),
+    },
+    {
+        "category": "VL: Spatial Reasoning",
+        "prompt": "Analyze the spatial relationships in this image. What objects are near each other? What is in the foreground vs background? Describe the depth and perspective.",
         "image": str(TEST_IMAGE_PATH),
     },
 ]
@@ -739,10 +783,12 @@ def main():
         question_pool = TEXT_QUESTIONS + VL_QUESTIONS
 
     # Validate VL image exists when running VL tests
-    vl_in_pool = any(q.get("image") for q in question_pool)
-    if vl_in_pool and not TEST_IMAGE_PATH.exists():
-        print(f"ERROR: VL test image not found: {TEST_IMAGE_PATH}")
-        sys.exit(1)
+    # Validate VL images exist when running VL tests
+    vl_images = set(q.get("image") for q in question_pool if q.get("image"))
+    for img in vl_images:
+        if not Path(img).exists():
+            print(f"ERROR: VL test image not found: {img}")
+            sys.exit(1)
 
     # Select categories
     if args.categories:
